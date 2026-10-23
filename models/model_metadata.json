@@ -1,0 +1,59 @@
+{
+  "accuracy": 0.666,
+  "macro_precision": 0.6706,
+  "macro_recall": 0.6208,
+  "macro_f1": 0.636,
+  "confusion_matrix": [
+    [
+      996,
+      1037,
+      242
+    ],
+    [
+      407,
+      4213,
+      876
+    ],
+    [
+      108,
+      1331,
+      2770
+    ]
+  ],
+  "confusion_matrix_labels": [
+    "Negative",
+    "Neutral",
+    "Positive"
+  ],
+  "classification_report": "              precision    recall  f1-score   support\n\n    Negative       0.66      0.44      0.53      2275\n     Neutral       0.64      0.77      0.70      5496\n    Positive       0.71      0.66      0.68      4209\n\n    accuracy                           0.67     11980\n   macro avg       0.67      0.62      0.64     11980\nweighted avg       0.67      0.67      0.66     11980\n",
+  "n_train": 47919,
+  "n_test": 11980,
+  "n_total": 59899,
+  "train_date": "2026-10-23 12:53:00",
+  "algorithm": "TF-IDF + Logistic Regression (multinomial)",
+  "dataset_source": "cardiffnlp/tweet_eval \u2014 sentiment task (Cardiff NLP, HuggingFace)",
+  "label_mapping": {
+    "0": "Negative",
+    "1": "Neutral",
+    "2": "Positive"
+  },
+  "tfidf_params": {
+    "max_features": 30000,
+    "ngram_range": [
+      1,
+      2
+    ],
+    "sublinear_tf": true,
+    "min_df": 2,
+    "strip_accents": "unicode",
+    "analyzer": "word"
+  },
+  "lr_params": {
+    "max_iter": 1000,
+    "C": 1.0,
+    "solver": "lbfgs",
+    "random_state": 42
+  },
+  "test_size": 0.2,
+  "random_seed": 42
+}
