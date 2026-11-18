@@ -79,7 +79,7 @@ def _model_loader() -> dict:
 def _ensure_models() -> None:
     loader = _model_loader()
     if not loader["done"].is_set():
-        msg = ("Downloading the language models. This happens only once (about 1 GB) ..."
+        msg = ("Downloading the language models. This happens only once (about 1.5 GB) ..."
                if loader["downloading"] else "Getting the language models ready (a few seconds after Senti-Q starts) ...")
         with st.spinner(msg):
             loader["done"].wait(timeout=900)
@@ -380,19 +380,7 @@ if "analysis" not in st.session_state:
     st.session_state.analysis_id = None
     st.session_state.ingested = None
 
-with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
-    _html('<div class="brand"><span class="brand-mark">Q</span>Senti-Q</div>')
-    with st.popover("Get the extension", width="content"):
-        st.markdown("**Senti-Q for X** reads the replies to a post in your own signed-in browser "
-                    "and brings them here. It never touches your password or account.")
-        st.markdown(
-            "1. Open `chrome://extensions` (or `edge://extensions`) and switch on **Developer mode**.\n"
-            "2. Click **Load unpacked** and choose the `browser-extension` folder in this project.\n"
-            "3. Pin **Senti-Q for X** to your toolbar.\n\n"
-            "**Then:** open a post on X and click the Senti-Q icon. On a timeline, click the icon "
-            "and then the post you want. Or paste a link here and press **Read the replies on X**.\n\n"
-            "After installing or updating the extension, reload any X tabs that were already open."
-        )
+_html('<div class="brand"><span class="brand-mark">Q</span>Senti-Q</div>')
 
 _has_result = bool(st.query_params.get("post") or st.query_params.get("r") or st.session_state.analysis)
 _html(f"""

@@ -1,0 +1,469 @@
+{
+  "date": "2026-11-19 02:16",
+  "protocol": "Combination chosen on the validation split only; test split reported, never used to choose.",
+  "sentiment": {
+    "metric": "macro_recall",
+    "models": [
+      "cardiffnlp/twitter-roberta-base-sentiment",
+      "finiteautomata/bertweet-base-sentiment-analysis"
+    ],
+    "shipped": true,
+    "verdict": "SHIPPED: twitter-roberta-base-sentiment + bertweet-base-sentiment-analysis",
+    "validation_winner": [
+      "cardiffnlp/twitter-roberta-base-sentiment",
+      "finiteautomata/bertweet-base-sentiment-analysis"
+    ],
+    "val": {
+      "accuracy": 0.8385,
+      "macro_f1": 0.832932391166751,
+      "macro_recall": 0.8392871778947728
+    },
+    "test": {
+      "accuracy": 0.7315206773038099,
+      "macro_f1": 0.7320089677497332,
+      "macro_recall": 0.7397837651875497
+    },
+    "baseline": {
+      "model": "cardiffnlp/twitter-roberta-base-sentiment-latest",
+      "val": {
+        "accuracy": 0.771,
+        "macro_f1": 0.760225618926501,
+        "macro_recall": 0.7758968059600971
+      },
+      "test": {
+        "accuracy": 0.7216704656463693,
+        "macro_f1": 0.7239939504883192,
+        "macro_recall": 0.7350605503115837
+      }
+    },
+    "skipped": [
+      "cardiffnlp/twitter-xlm-roberta-base-sentiment"
+    ],
+    "all": [
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-sentiment-latest"
+        ],
+        "val": {
+          "accuracy": 0.771,
+          "macro_f1": 0.760225618926501,
+          "macro_recall": 0.7758968059600971
+        },
+        "test": {
+          "accuracy": 0.7216704656463693,
+          "macro_f1": 0.7239939504883192,
+          "macro_recall": 0.7350605503115837
+        }
+      },
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-sentiment"
+        ],
+        "val": {
+          "accuracy": 0.807,
+          "macro_f1": 0.8008728032717173,
+          "macro_recall": 0.8099120757348605
+        },
+        "test": {
+          "accuracy": 0.7245197004233149,
+          "macro_f1": 0.7240984338795494,
+          "macro_recall": 0.7277346785155013
+        }
+      },
+      {
+        "models": [
+          "finiteautomata/bertweet-base-sentiment-analysis"
+        ],
+        "val": {
+          "accuracy": 0.836,
+          "macro_f1": 0.8317936565576399,
+          "macro_recall": 0.8382648176951975
+        },
+        "test": {
+          "accuracy": 0.7206935851514165,
+          "macro_f1": 0.7207212167350736,
+          "macro_recall": 0.7301636816259244
+        }
+      },
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-sentiment-latest",
+          "cardiffnlp/twitter-roberta-base-sentiment"
+        ],
+        "val": {
+          "accuracy": 0.8005,
+          "macro_f1": 0.7906563744765887,
+          "macro_recall": 0.8036964207850282
+        },
+        "test": {
+          "accuracy": 0.7263920547053078,
+          "macro_f1": 0.7272332710873542,
+          "macro_recall": 0.7355130339385619
+        }
+      },
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-sentiment-latest",
+          "finiteautomata/bertweet-base-sentiment-analysis"
+        ],
+        "val": {
+          "accuracy": 0.823,
+          "macro_f1": 0.8139696699106661,
+          "macro_recall": 0.8211393037342405
+        },
+        "test": {
+          "accuracy": 0.7314392705958971,
+          "macro_f1": 0.7321410301150489,
+          "macro_recall": 0.7418777720829223
+        }
+      },
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-sentiment",
+          "finiteautomata/bertweet-base-sentiment-analysis"
+        ],
+        "val": {
+          "accuracy": 0.8385,
+          "macro_f1": 0.832932391166751,
+          "macro_recall": 0.8392871778947728
+        },
+        "test": {
+          "accuracy": 0.7315206773038099,
+          "macro_f1": 0.7320089677497332,
+          "macro_recall": 0.7397837651875497
+        }
+      },
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-sentiment-latest",
+          "cardiffnlp/twitter-roberta-base-sentiment",
+          "finiteautomata/bertweet-base-sentiment-analysis"
+        ],
+        "val": {
+          "accuracy": 0.822,
+          "macro_f1": 0.8156320093195571,
+          "macro_recall": 0.8241998859087466
+        },
+        "test": {
+          "accuracy": 0.7352653858677956,
+          "macro_f1": 0.7360647138700621,
+          "macro_recall": 0.7442943851912548
+        }
+      }
+    ]
+  },
+  "hate": {
+    "metric": "macro_f1",
+    "models": [
+      "cardiffnlp/twitter-roberta-base-hate-latest"
+    ],
+    "shipped": false,
+    "verdict": "NOT SHIPPED (regressed on the test split); keeping twitter-roberta-base-hate-latest",
+    "validation_winner": [
+      "cardiffnlp/twitter-roberta-base-hate-latest",
+      "cardiffnlp/twitter-roberta-base-hate"
+    ],
+    "val": {
+      "accuracy": 0.864,
+      "macro_f1": 0.8617346606805909,
+      "f1_hate": 0.8440366972477065,
+      "recall_hate": 0.8618266978922716
+    },
+    "test": {
+      "accuracy": 0.797979797979798,
+      "macro_f1": 0.7979178507712915,
+      "f1_hate": 0.8014559894109861,
+      "recall_hate": 0.9672523961661342
+    },
+    "baseline": {
+      "model": "cardiffnlp/twitter-roberta-base-hate-latest",
+      "val": {
+        "accuracy": 0.859,
+        "macro_f1": 0.8563825723816556,
+        "f1_hate": 0.8369942196531792,
+        "recall_hate": 0.8477751756440282
+      },
+      "test": {
+        "accuracy": 0.867003367003367,
+        "macro_f1": 0.8665505778599429,
+        "f1_hate": 0.8587772613514479,
+        "recall_hate": 0.9592651757188498
+      }
+    },
+    "skipped": [],
+    "all": [
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-hate-latest"
+        ],
+        "val": {
+          "accuracy": 0.859,
+          "macro_f1": 0.8563825723816556,
+          "f1_hate": 0.8369942196531792,
+          "recall_hate": 0.8477751756440282
+        },
+        "test": {
+          "accuracy": 0.867003367003367,
+          "macro_f1": 0.8665505778599429,
+          "f1_hate": 0.8587772613514479,
+          "recall_hate": 0.9592651757188498
+        }
+      },
+      {
+        "models": [
+          "facebook/roberta-hate-speech-dynabench-r4-target"
+        ],
+        "val": {
+          "accuracy": 0.671,
+          "macro_f1": 0.6671896543526838,
+          "f1_hate": 0.631578947368421,
+          "recall_hate": 0.6604215456674473
+        },
+        "test": {
+          "accuracy": 0.6303030303030303,
+          "macro_f1": 0.6302923006528776,
+          "f1_hate": 0.6322839919624916,
+          "recall_hate": 0.7539936102236422
+        }
+      },
+      {
+        "models": [
+          "Hate-speech-CNERG/dehatebert-mono-english"
+        ],
+        "val": {
+          "accuracy": 0.695,
+          "macro_f1": 0.6947774927922455,
+          "f1_hate": 0.7030185004868549,
+          "recall_hate": 0.8454332552693209
+        },
+        "test": {
+          "accuracy": 0.560942760942761,
+          "macro_f1": 0.5410722817555116,
+          "f1_hate": 0.6365663322185061,
+          "recall_hate": 0.9121405750798722
+        }
+      },
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-hate"
+        ],
+        "val": {
+          "accuracy": 0.784,
+          "macro_f1": 0.7796817625458996,
+          "f1_hate": 0.7488372093023256,
+          "recall_hate": 0.7540983606557377
+        },
+        "test": {
+          "accuracy": 0.5784511784511784,
+          "macro_f1": 0.5566918965523819,
+          "f1_hate": 0.6549062844542448,
+          "recall_hate": 0.9488817891373802
+        }
+      },
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-hate-latest",
+          "facebook/roberta-hate-speech-dynabench-r4-target"
+        ],
+        "val": {
+          "accuracy": 0.793,
+          "macro_f1": 0.7914212675742697,
+          "f1_hate": 0.7732749178532311,
+          "recall_hate": 0.8266978922716628
+        },
+        "test": {
+          "accuracy": 0.7397306397306397,
+          "macro_f1": 0.738885181747428,
+          "f1_hate": 0.75374323032813,
+          "recall_hate": 0.944888178913738
+        }
+      },
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-hate-latest",
+          "Hate-speech-CNERG/dehatebert-mono-english"
+        ],
+        "val": {
+          "accuracy": 0.857,
+          "macro_f1": 0.854875228216315,
+          "f1_hate": 0.8373151308304891,
+          "recall_hate": 0.8618266978922716
+        },
+        "test": {
+          "accuracy": 0.8531986531986532,
+          "macro_f1": 0.852997002997003,
+          "f1_hate": 0.8475524475524475,
+          "recall_hate": 0.9680511182108626
+        }
+      },
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-hate-latest",
+          "cardiffnlp/twitter-roberta-base-hate"
+        ],
+        "val": {
+          "accuracy": 0.864,
+          "macro_f1": 0.8617346606805909,
+          "f1_hate": 0.8440366972477065,
+          "recall_hate": 0.8618266978922716
+        },
+        "test": {
+          "accuracy": 0.797979797979798,
+          "macro_f1": 0.7979178507712915,
+          "f1_hate": 0.8014559894109861,
+          "recall_hate": 0.9672523961661342
+        }
+      },
+      {
+        "models": [
+          "facebook/roberta-hate-speech-dynabench-r4-target",
+          "Hate-speech-CNERG/dehatebert-mono-english"
+        ],
+        "val": {
+          "accuracy": 0.711,
+          "macro_f1": 0.7104135875147173,
+          "f1_hate": 0.6973821989528796,
+          "recall_hate": 0.7798594847775175
+        },
+        "test": {
+          "accuracy": 0.6164983164983165,
+          "macro_f1": 0.6125184257721299,
+          "f1_hate": 0.6517884439009477,
+          "recall_hate": 0.8514376996805112
+        }
+      },
+      {
+        "models": [
+          "facebook/roberta-hate-speech-dynabench-r4-target",
+          "cardiffnlp/twitter-roberta-base-hate"
+        ],
+        "val": {
+          "accuracy": 0.74,
+          "macro_f1": 0.738239925257431,
+          "f1_hate": 0.7167755991285403,
+          "recall_hate": 0.7704918032786885
+        },
+        "test": {
+          "accuracy": 0.5653198653198653,
+          "macro_f1": 0.5498255961191453,
+          "f1_hate": 0.6333428003408123,
+          "recall_hate": 0.8905750798722045
+        }
+      },
+      {
+        "models": [
+          "Hate-speech-CNERG/dehatebert-mono-english",
+          "cardiffnlp/twitter-roberta-base-hate"
+        ],
+        "val": {
+          "accuracy": 0.791,
+          "macro_f1": 0.7898177247014456,
+          "f1_hate": 0.774054054054054,
+          "recall_hate": 0.8384074941451991
+        },
+        "test": {
+          "accuracy": 0.5622895622895623,
+          "macro_f1": 0.5362320372494199,
+          "f1_hate": 0.6461622210125204,
+          "recall_hate": 0.9480830670926518
+        }
+      },
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-hate-latest",
+          "facebook/roberta-hate-speech-dynabench-r4-target",
+          "Hate-speech-CNERG/dehatebert-mono-english"
+        ],
+        "val": {
+          "accuracy": 0.811,
+          "macro_f1": 0.8101477532644039,
+          "f1_hate": 0.797427652733119,
+          "recall_hate": 0.8711943793911007
+        },
+        "test": {
+          "accuracy": 0.7505050505050505,
+          "macro_f1": 0.7496945920761244,
+          "f1_hate": 0.7639375597323989,
+          "recall_hate": 0.957667731629393
+        }
+      },
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-hate-latest",
+          "facebook/roberta-hate-speech-dynabench-r4-target",
+          "cardiffnlp/twitter-roberta-base-hate"
+        ],
+        "val": {
+          "accuracy": 0.824,
+          "macro_f1": 0.8217642102534188,
+          "f1_hate": 0.8018018018018018,
+          "recall_hate": 0.8337236533957846
+        },
+        "test": {
+          "accuracy": 0.7653198653198653,
+          "macro_f1": 0.7647745553040406,
+          "f1_hate": 0.7761002248634757,
+          "recall_hate": 0.9648562300319489
+        }
+      },
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-hate-latest",
+          "Hate-speech-CNERG/dehatebert-mono-english",
+          "cardiffnlp/twitter-roberta-base-hate"
+        ],
+        "val": {
+          "accuracy": 0.854,
+          "macro_f1": 0.8524035973084886,
+          "f1_hate": 0.8370535714285714,
+          "recall_hate": 0.8782201405152225
+        },
+        "test": {
+          "accuracy": 0.695959595959596,
+          "macro_f1": 0.6907632304911691,
+          "f1_hate": 0.730849478390462,
+          "recall_hate": 0.9792332268370607
+        }
+      },
+      {
+        "models": [
+          "facebook/roberta-hate-speech-dynabench-r4-target",
+          "Hate-speech-CNERG/dehatebert-mono-english",
+          "cardiffnlp/twitter-roberta-base-hate"
+        ],
+        "val": {
+          "accuracy": 0.774,
+          "macro_f1": 0.7733390566893059,
+          "f1_hate": 0.7610993657505285,
+          "recall_hate": 0.8430913348946136
+        },
+        "test": {
+          "accuracy": 0.5686868686868687,
+          "macro_f1": 0.5441542770649899,
+          "f1_hate": 0.6499043454495764,
+          "recall_hate": 0.9496805111821086
+        }
+      },
+      {
+        "models": [
+          "cardiffnlp/twitter-roberta-base-hate-latest",
+          "facebook/roberta-hate-speech-dynabench-r4-target",
+          "Hate-speech-CNERG/dehatebert-mono-english",
+          "cardiffnlp/twitter-roberta-base-hate"
+        ],
+        "val": {
+          "accuracy": 0.82,
+          "macro_f1": 0.8188981765058616,
+          "f1_hate": 0.8047722342733189,
+          "recall_hate": 0.8688524590163934
+        },
+        "test": {
+          "accuracy": 0.7239057239057239,
+          "macro_f1": 0.7214653525497917,
+          "f1_hate": 0.7475369458128078,
+          "recall_hate": 0.9696485623003195
+        }
+      }
+    ]
+  }
+}

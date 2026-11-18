@@ -67,6 +67,11 @@ def _model_tag(model: str) -> str:
     return hashlib.md5(f"{model}|{stamp}".encode()).hexdigest()[:8]
 
 
+def _ensemble_fn(fn):
+    """Wrap a per-model scoring function so a "model" of ids joined by "|" is averaged."""
+    return lambda texts, model: np.mean([fn(texts, m) for m in model.split("|")], axis=0)
+
+
 def _cached(name: str, fn, texts: list[str], model: str) -> np.ndarray:
     CACHE.mkdir(parents=True, exist_ok=True)
     path = CACHE / f"{name}_{len(texts)}_{_model_tag(model)}.npy"
@@ -75,7 +80,7 @@ def _cached(name: str, fn, texts: list[str], model: str) -> np.ndarray:
     t0 = time.time()
     arr = fn(texts, model)
     np.save(path, arr)
-    print(f"   {name} [{transformer_models.describe(model)}]: {len(texts)} texts in {time.time() - t0:.0f}s")
+    print(f"   {name} [{model}]: {len(texts)} texts in {time.time() - t0:.0f}s")
     return arr
 
 
@@ -108,11 +113,11 @@ def sentiment(limit):
 
     p_l_val, p_l = _tfidf_probs(d["train"], [val, test], balanced=False)
     avail = transformer_models.available()
-    active = transformer_models.SENTIMENT_MODEL
-    fn = transformer_models.sentiment_probs
+    active = "|".join(transformer_models.SENTIMENT_MODELS)
+    fn = _ensemble_fn(transformer_models.sentiment_probs)
     p_t_val = _cached("sent_val", fn, val["text"].tolist(), active) if avail else None
     p_t = _cached(f"sent_test_{limit}", fn, test["text"].tolist(), active) if avail else None
-    finetuned = avail and transformer_models.is_finetuned("sentiment")
+    finetuned = avail and active != transformer_models.HUB_SENTIMENT      # i.e. not the original single model
     p_orig = (_cached(f"sent_test_{limit}", fn, test["text"].tolist(), transformer_models.HUB_SENTIMENT)
               if finetuned else None)
     cues_val = [lexicon.extract(t) for t in val["text"]]
@@ -146,11 +151,11 @@ def hate(limit):
     val, test = d["validation"], _sample(d["test"], limit)
     p_l_val, p_l_test = (p[:, 1] for p in _tfidf_probs(d["train"], [val, test], balanced=True))
     avail = transformer_models.available()
-    active = transformer_models.HATE_MODEL
-    fn = transformer_models.hate_probs
+    active = "|".join(transformer_models.HATE_MODELS)
+    fn = _ensemble_fn(transformer_models.hate_probs)
     p_t_val = _cached("hate_val", fn, val["text"].tolist(), active) if avail else None
     p_t_test = _cached(f"hate_test_{limit}", fn, test["text"].tolist(), active) if avail else None
-    finetuned = avail and transformer_models.is_finetuned("hate")
+    finetuned = avail and active != transformer_models.HUB_HATE
     p_orig = (_cached(f"hate_test_{limit}", fn, test["text"].tolist(), transformer_models.HUB_HATE)
               if finetuned else None)
 

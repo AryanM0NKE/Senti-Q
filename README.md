@@ -37,7 +37,7 @@ python -m src.hate_speech          # small TF-IDF hate-speech model (~1 min)
 streamlit run app.py
 ```
 
-**About the language models:** the two RoBERTa models (~1 GB) are downloaded **once**,
+**About the language models:** the three language models (~1.5 GB) are downloaded **once**,
 on the very first run, into `%USERPROFILE%\.cache\huggingface`. After that they're
 loaded from disk, without contacting the internet, in the background as soon as Senti-Q
 opens. That takes about 10–15 seconds per start, mostly starting PyTorch, and they stay
@@ -94,7 +94,7 @@ reaction mix % · likes-weighted mix · fuzzy overall response · hate received 
 Each reply, and the post itself, is scored by the engine:
 
 ```
-text ──────┬─► RoBERTa sentiment  (cardiffnlp/twitter-roberta-base-sentiment-latest) ─┐
+text ──────┬─► RoBERTa + BERTweet sentiment models (probabilities averaged) ──────────┐
            ├─► VADER lexicon      (emoji, CAPS, "!!!", intensifiers) ─────────────────┼─► fuzzy fusion ─► sentiment + confidence
            ├─► TF-IDF + Logistic Regression ─────────────────────────────────────────┘
            ├─► RoBERTa hate       (cardiffnlp/twitter-roberta-base-hate-latest) ──────┐
@@ -138,14 +138,43 @@ Scored on TweetEval's official, untouched test sets
 |---|---|---|
 | Original TF-IDF + Logistic Regression | 59.5% | 48.3% |
 | VADER lexicon only | 54.8% | n/a |
-| RoBERTa only | 72.2% | 86.7% |
-| **Fuzzy ensemble (Senti-Q)** | **71.9%** | **86.7%** |
+| One RoBERTa model (the previous version of Senti-Q) | 72.2% | 86.7% |
+| Two-model sentiment combination, no fuzzy layer | 73.2% | 86.7% |
+| **Fuzzy ensemble (Senti-Q)** | **73.1%** | **86.7%** |
 
-* **Where the accuracy comes from:** the transformers. That's +12.4 points on sentiment
+* **Where the accuracy comes from:** the transformers. That's +13.6 points on sentiment
   and +38.4 on hate over the original model.
 * **What the fuzzy layer does to accuracy:** nothing measurable on this benchmark. Its
   value is the confidence level, the severity grading (offensive vs hate vs severe),
   sarcasm handling and the explanations.
+* **How far can it go?** These benchmarks have a ceiling: people disagree about the
+  sentiment of short tweets, so even very large models score only in the low-to-mid 70s
+  on this test set (from published results as I recall them; not re-checked here).
+  Expect small gains from here, not big ones.
+
+### Model search (`python -m src.compare_models`)
+
+Each candidate model is scored on the official validation and test sets, then every
+combination is tried (probabilities averaged). The rule was fixed **before** looking at
+results: a combination ships only if it beats the current model on validation **and** does
+not regress on test.
+
+| Task | Winner on validation | Test result | Shipped? |
+|---|---|---|---|
+| Sentiment | RoBERTa-sentiment + BERTweet | accuracy 72.2 → 73.2, macro recall 73.5 → 74.0 | **Yes** |
+| Hate speech | RoBERTa-hate-latest + RoBERTa-hate | accuracy **86.7 → 79.8** | **No** |
+
+* The sentiment gain is real but small (+1 point).
+* The hate combination looked best on validation and then collapsed on test (HatEval's
+  test set is drawn from a different distribution), so the single model stays. The same
+  thing happened to the hate fine-tuning run below.
+* BERTweet-sentiment was trained on SemEval-2017 tweets that TweetEval's *validation*
+  split comes from, so its validation score (83.8%) is inflated. The test split is the
+  fair comparison.
+* A rule that treated insults aimed at nobody in particular as "offensive, not hate" was
+  also tested. It slightly lowered accuracy on both splits, so it was not added.
+* Converting emojis to words before scoring was tested too: accuracy on the emoji-bearing
+  test tweets fell from 73.1% to 68.8%, so emojis are passed to the models as they are.
 
 ### Fine-tuning experiments
 
@@ -173,8 +202,8 @@ What the experiments show:
   test-regression gate exists.
 
 Reports are in `models/finetuned/*_report.json`. Fine-tuned weights (~480 MB) are too
-large for GitHub, so they stay on the machine that trained them. Everyone else
-automatically uses the original Hugging Face models.
+large for GitHub, so they stay on the machine that trained them. The model combination in
+`models/ensemble.json` takes precedence over them, so every machine runs the same models.
 
 ---
 

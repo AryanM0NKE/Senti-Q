@@ -18,6 +18,7 @@ Hub. Everything here is optional: if `torch` / `transformers` are not installed,
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
 import threading
@@ -44,6 +45,24 @@ def _resolve(task: str, hub_id: str, env: str) -> str:
 SENTIMENT_MODEL = _resolve("sentiment", HUB_SENTIMENT, "SENTIQ_SENTIMENT_MODEL")
 HATE_MODEL      = _resolve("hate", HUB_HATE, "SENTIQ_HATE_MODEL")
 
+# models/ensemble.json (written by `python -m src.compare_models`) names the combination of
+# models whose probabilities are averaged. Without it, one model per task is used.
+ENSEMBLE_PATH = ROOT / "models" / "ensemble.json"
+
+
+def _ensemble(task: str, single: str) -> list[str]:
+    try:
+        models = json.loads(ENSEMBLE_PATH.read_text(encoding="utf-8"))[task]["models"]
+        if models and not os.environ.get("SENTIQ_SINGLE_MODELS"):
+            return list(models)
+    except Exception:
+        pass
+    return [single]
+
+
+SENTIMENT_MODELS = _ensemble("sentiment", SENTIMENT_MODEL)
+HATE_MODELS      = _ensemble("hate", HATE_MODEL)
+
 BATCH_SIZE = 32
 MAX_LENGTH = 128
 
@@ -68,12 +87,13 @@ def _is_cached(model_name: str) -> bool:
 
 
 def models_cached() -> bool:
-    """True if both models are already on this computer (so nothing will be downloaded)."""
-    return _is_cached(SENTIMENT_MODEL) and _is_cached(HATE_MODEL)
+    """True if every model is already on this computer (so nothing will be downloaded)."""
+    return all(_is_cached(m) for m in SENTIMENT_MODELS + HATE_MODELS)
 
 
 def is_finetuned(task: str) -> bool:
-    return (SENTIMENT_MODEL if task == "sentiment" else HATE_MODEL).startswith(str(FINETUNED_DIR))
+    models = SENTIMENT_MODELS if task == "sentiment" else HATE_MODELS
+    return any(m.startswith(str(FINETUNED_DIR)) for m in models)
 
 
 def describe(model_name: str) -> str:
@@ -117,27 +137,38 @@ def _scores(model_name: str, texts: list[str]) -> list[dict]:
     return [{d["label"].lower(): float(d["score"]) for d in row} for row in out]
 
 
+def sentiment_row(r: dict) -> list[float]:
+    """[negative, neutral, positive] from a model's label -> score dict, whatever it calls its labels."""
+    if any(k.startswith("label_") for k in r):          # generic LABEL_0/1/2 = negative/neutral/positive
+        return [r.get("label_0", 0.0), r.get("label_1", 0.0), r.get("label_2", 0.0)]
+
+    def pick(*keys):
+        return next((v for k, v in r.items() if any(x in k for x in keys)), 0.0)
+    return [pick("neg"), pick("neu"), pick("pos")]
+
+
+def hate_row(r: dict) -> float:
+    """P(hate) from a model's label -> score dict."""
+    if any(k.startswith("label_") for k in r):          # generic LABEL_1 = hate
+        return r.get("label_1", 0.0)
+    return next((v for k, v in r.items() if "hate" in k and "not" not in k and "non" not in k), 0.0)
+
+
 def sentiment_probs(texts: list[str], model: str | None = None) -> np.ndarray:
-    """(n, 3) array of [negative, neutral, positive] probabilities."""
+    """(n, 3) array of [negative, neutral, positive] probabilities (ensemble average)."""
     if not texts:
         return np.empty((0, 3))
-    rows = _scores(model or SENTIMENT_MODEL, texts)
-    return np.array([[r.get("negative", 0), r.get("neutral", 0), r.get("positive", 0)] for r in rows])
+    models = [model] if model else SENTIMENT_MODELS
+    return np.mean([np.array([sentiment_row(r) for r in _scores(m, texts)]) for m in models], axis=0)
 
 
 def hate_probs(texts: list[str], model: str | None = None) -> np.ndarray:
-    """(n,) array of P(hate)."""
+    """(n,) array of P(hate) (ensemble average)."""
     if not texts:
         return np.empty(0)
-    rows = _scores(model or HATE_MODEL, texts)
-    probs = []
-    for r in rows:
-        hate = [v for k, v in r.items() if "hate" in k and "not" not in k and "non" not in k]
-        if not hate:  # generic LABEL_0 / LABEL_1 naming
-            hate = [r.get("label_1", 0.0)]
-        probs.append(hate[0])
-    return np.array(probs)
+    models = [model] if model else HATE_MODELS
+    return np.mean([np.array([hate_row(r) for r in _scores(m, texts)]) for m in models], axis=0)
 
 
 def is_loaded() -> bool:
-    return SENTIMENT_MODEL in _pipes and HATE_MODEL in _pipes
+    return all(m in _pipes for m in SENTIMENT_MODELS + HATE_MODELS)

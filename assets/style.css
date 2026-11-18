@@ -45,11 +45,11 @@ html, body, .stApp, button, input, textarea, select, [class*="css"] {
 }
 
 /* ---------- Nav ---------- */
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 1.05rem;
-         letter-spacing: -0.02em; color: var(--ink); }
-.brand-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--ink); color: #fff;
+.brand { display: flex; align-items: center; gap: 14px; font-weight: 600; font-size: 1.6rem;
+         letter-spacing: -0.03em; color: var(--ink); }
+.brand-mark { width: 44px; height: 44px; border-radius: 12px; background: var(--ink); color: #fff;
               display: inline-flex; align-items: center; justify-content: center;
-              font-family: var(--serif); font-style: italic; font-size: 1.15rem; }
+              font-family: var(--serif); font-style: italic; font-size: 1.75rem; }
 [data-testid="stPopover"] button {
     border-radius: 999px !important; border: 1px solid var(--line) !important; background: var(--paper) !important;
     color: var(--ink) !important; font-weight: 500 !important; font-size: .9rem !important; min-height: 38px;
