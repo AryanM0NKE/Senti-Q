@@ -1,29 +1,107 @@
-// Senti-Q for X — hands the post you're looking at on X to the Senti-Q web app.
+// Senti-Q for X — background service worker.
 //
-// * Toolbar icon: on a post's own page, analyses that post. On a timeline, analyses
-//   the post nearest the middle of your screen.
-// * Right-click any post link (e.g. its timestamp) -> "Analyse with Senti-Q".
+// * Toolbar icon on a post's page: reads that post's replies, then opens Senti-Q.
+// * Toolbar icon on a timeline: opens the post in the middle of your screen, reads its
+//   replies, closes that tab and opens Senti-Q.
+// * Right-click a post's link -> "Read the reactions with Senti-Q".
+// * Links from Senti-Q ("Read the replies on X") end in #senti-q: the replies are read
+//   automatically and you're taken back to the Senti-Q tab you came from.
 //
-// The extension never reads your X account, cookies or password. It only reads the
-// link of one post, and only when you click, then opens Senti-Q with that link.
+// The replies travel inside the Senti-Q link itself (compressed), so nothing is stored
+// or sent anywhere else.
 
-const DEFAULT_APP_URL = "http://localhost:8501";
-const POST_RE = /^https:\/\/(?:www\.)?(?:x|twitter)\.com\/(?:i\/web|[^/]+)\/status\/\d+/;
-const X_PAGE_RE = /^https:\/\/(?:www\.)?(?:x|twitter)\.com\//;
+const DEFAULTS = { appUrl: "http://localhost:8501", maxReplies: 100 };
+const MARK = "senti-q";
+const MAX_TOKEN = 24000;   // characters of packed replies in the Senti-Q link
+const POST_RE = /^https:\/\/(?:www\.)?(?:x|twitter)\.com\/(?:i\/web|[^/?#]+)\/status\/(\d+)/;
+const X_RE = /^https:\/\/(?:www\.)?(?:x|twitter)\.com\//;
 
-async function appUrl() {
-  const { appUrl } = await chrome.storage.sync.get({ appUrl: DEFAULT_APP_URL });
+async function appBase() {
+  const { appUrl } = await chrome.storage.sync.get(DEFAULTS);
   return appUrl.replace(/\/+$/, "");
 }
 
-function cleanPostUrl(url) {
-  const m = url.match(POST_RE);
-  return m ? m[0] : null;
+// ---------- packing: JSON -> raw deflate -> base64url ----------
+async function deflateBase64(obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+  const buf = new Uint8Array(await new Response(stream).arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-async function openInSentiQ(postUrl, tab) {
-  const target = `${await appUrl()}/?post=${encodeURIComponent(postUrl)}`;
-  await chrome.tabs.create({ url: target, index: tab ? tab.index + 1 : undefined });
+async function pack(data) {
+  const p = data.post || {};
+  const base = {
+    v: 1, u: data.url || "", at: Date.now(),
+    p: [p.id || "", p.handle || "", p.name || "", p.text || "", p.lang || "", p.time || "",
+        p.likes || 0, p.replies || 0, p.reposts || 0],
+    s: data.selfReplies || 0, m: data.mediaOnly || 0, lo: data.loggedOut ? 1 : 0,
+  };
+  if (data.error) base.err = data.error;
+  const replies = data.replies || [];
+  let keep = replies.length;
+  for (;;) {   // X lists replies by relevance, so trim from the end until the link is short enough
+    const token = await deflateBase64({
+      ...base, t: replies.length - keep,
+      r: replies.slice(0, keep).map((r) => [r.id, r.handle, r.text, r.likes || 0, r.lang || ""]),
+    });
+    if (token.length <= MAX_TOKEN || keep === 0) return token;
+    keep = Math.floor(keep * 0.85);
+  }
+}
+
+// ---------- handing results to Senti-Q ----------
+async function deliver(data, xTab, openedByApp) {
+  const app = await appBase();
+  const postUrl = data.url || (xTab?.url || "").split("#")[0];
+  const target = `${app}/?post=${encodeURIComponent(postUrl)}&r=${await pack(data)}`;
+  const postId = (postUrl.match(/\/status\/(\d+)/) || [])[1];
+
+  // When Senti-Q asked for the replies ("Read the replies on X"), return to that Senti-Q tab:
+  // the one this X tab was opened from, else any Senti-Q tab showing this post. A toolbar
+  // click always opens a fresh Senti-Q tab, so an earlier analysis is never replaced.
+  let appTab = null;
+  if (openedByApp && xTab?.openerTabId != null) {
+    try {
+      const t = await chrome.tabs.get(xTab.openerTabId);
+      if ((t.url || t.pendingUrl || "").startsWith(app)) appTab = t;
+    } catch (e) { /* opener closed */ }
+  }
+  if (!appTab && openedByApp && postId) {
+    const tabs = await chrome.tabs.query({});
+    const marker = new RegExp(`/status/${postId}(?!\\d)`);
+    appTab = tabs.find((t) => (t.url || "").startsWith(app) && marker.test(decodeURIComponent(t.url))) || null;
+  }
+
+  if (appTab) {
+    await chrome.tabs.update(appTab.id, { url: target, active: true });
+    await chrome.windows.update(appTab.windowId, { focused: true });
+  } else {
+    await chrome.tabs.create({ url: target, index: xTab ? xTab.index + 1 : undefined });
+  }
+  if (openedByApp && xTab) chrome.tabs.remove(xTab.id).catch(() => {});
+}
+
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (msg?.type === "sentiq:reactions") deliver(msg.data, sender.tab, !!msg.openedByApp);
+});
+
+// ---------- starting a read ----------
+async function ensureContentScript(tabId) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "sentiq:ping" });
+  } catch (e) {   // tab was open before the extension was installed
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+  }
+}
+
+async function openAndRead(postUrl, fromTab) {
+  const clean = (postUrl.match(POST_RE) || [])[0];
+  if (!clean) return;
+  await chrome.tabs.create({ url: `${clean}#${MARK}`, active: true,
+                             index: fromTab ? fromTab.index + 1 : undefined, openerTabId: fromTab?.id });
 }
 
 async function flash(tab, text, title) {
@@ -33,69 +111,41 @@ async function flash(tab, text, title) {
   await chrome.action.setTitle({ title, tabId: tab.id });
   setTimeout(() => {
     chrome.action.setBadgeText({ text: "", tabId: tab.id });
-    chrome.action.setTitle({ title: "Analyse this post with Senti-Q", tabId: tab.id });
+    chrome.action.setTitle({ title: "Read the reactions with Senti-Q", tabId: tab.id });
   }, 4000);
 }
 
-// Runs inside the X page: link of the post closest to the vertical centre of the screen.
-function findCentredPost() {
-  const mid = window.innerHeight / 2;
-  let best = null;
-  let bestDist = Infinity;
-  for (const article of document.querySelectorAll("article")) {
-    const r = article.getBoundingClientRect();
-    if (r.bottom < 0 || r.top > window.innerHeight) continue;
-    const links = [...article.querySelectorAll('a[href*="/status/"]')];
-    const link = links.find((a) => a.querySelector("time")) || links[0];
-    if (!link) continue;
-    const dist = Math.abs(r.top + r.height / 2 - mid);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = link.href;
-    }
+async function onAction(tab) {
+  const url = tab.url || "";
+  if (!X_RE.test(url)) return flash(tab, "!", "Open a post on x.com, then click Senti-Q.");
+  await ensureContentScript(tab.id);
+  if (POST_RE.test(url)) {
+    await chrome.tabs.sendMessage(tab.id, { type: "sentiq:collect" });
+    return;
   }
-  return best;
+  const res = await chrome.tabs.sendMessage(tab.id, { type: "sentiq:centred" }).catch(() => null);
+  if (!res?.url) return flash(tab, "?", "No post found here. Scroll a post into view, or open it.");
+  await openAndRead(res.url, tab);
 }
 
-chrome.action.onClicked.addListener(async (tab) => {
-  const url = tab.url || "";
-  if (!X_PAGE_RE.test(url)) {
-    return flash(tab, "!", "Open x.com first, then click to analyse a post.");
-  }
-  let postUrl = cleanPostUrl(url);
-  if (!postUrl) {
-    try {
-      const [{ result }] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: findCentredPost,
-      });
-      postUrl = result ? cleanPostUrl(result) : null;
-    } catch (e) {
-      postUrl = null;
-    }
-  }
-  if (!postUrl) {
-    return flash(tab, "?", "No post found here. Scroll a post into view, or open it.");
-  }
-  await openInSentiQ(postUrl, tab);
-});
+chrome.action.onClicked.addListener((tab) => { onAction(tab); });
+self.sentiqAction = onAction;   // used by the automated tests
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
-    id: "sentiq-link",
-    title: "Analyse with Senti-Q",
-    contexts: ["link"],
+    id: "sentiq-link", title: "Read the reactions with Senti-Q", contexts: ["link"],
     targetUrlPatterns: ["https://x.com/*/status/*", "https://twitter.com/*/status/*"],
   });
   chrome.contextMenus.create({
-    id: "sentiq-page",
-    title: "Analyse this post with Senti-Q",
-    contexts: ["page"],
+    id: "sentiq-page", title: "Read the reactions with Senti-Q", contexts: ["page"],
     documentUrlPatterns: ["https://x.com/*/status/*", "https://twitter.com/*/status/*"],
   });
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  const postUrl = cleanPostUrl(info.linkUrl || info.pageUrl || "");
-  if (postUrl) await openInSentiQ(postUrl, tab);
+  if (info.menuItemId === "sentiq-link" && info.linkUrl) return openAndRead(info.linkUrl, tab);
+  if (info.menuItemId === "sentiq-page" && tab) {
+    await ensureContentScript(tab.id);
+    await chrome.tabs.sendMessage(tab.id, { type: "sentiq:collect" });
+  }
 });

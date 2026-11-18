@@ -1,17 +1,20 @@
-const input = document.getElementById("appUrl");
+const DEFAULTS = { appUrl: "http://localhost:8501", maxReplies: 100 };
+const appUrl = document.getElementById("appUrl");
+const maxReplies = document.getElementById("maxReplies");
 const saved = document.getElementById("saved");
 
-chrome.storage.sync.get({ appUrl: "http://localhost:8501" }, ({ appUrl }) => {
-  input.value = appUrl;
+chrome.storage.sync.get(DEFAULTS, (s) => {
+  appUrl.value = s.appUrl;
+  maxReplies.value = String(s.maxReplies);
 });
 
 document.getElementById("save").addEventListener("click", () => {
-  const value = (input.value || "").trim() || "http://localhost:8501";
-  if (!/^https?:\/\//.test(value)) {
-    saved.textContent = "Must start with http:// or https://";
+  const url = (appUrl.value || "").trim() || DEFAULTS.appUrl;
+  if (!/^https?:\/\//.test(url)) {
+    saved.textContent = "The address must start with http:// or https://";
     return;
   }
-  chrome.storage.sync.set({ appUrl: value }, () => {
+  chrome.storage.sync.set({ appUrl: url, maxReplies: parseInt(maxReplies.value, 10) || 100 }, () => {
     saved.textContent = "Saved";
     setTimeout(() => (saved.textContent = ""), 2000);
   });

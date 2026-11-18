@@ -72,6 +72,10 @@ html, body, .stApp, button, input, textarea, select, [class*="css"] {
     letter-spacing: -0.035em !important; margin: 0 0 22px !important; padding: 0 !important;
 }
 .hero h1 em { font-style: italic; }
+/* Once a post is open, the hero steps back so the reactions sit above the fold */
+.hero.compact { padding: 26px 0 22px; }
+.hero.compact .eyebrow, .hero.compact p { display: none; }
+.stApp .hero.compact h1 { font-size: clamp(2.2rem, 4.5vw, 3.2rem) !important; margin: 0 !important; }
 .hero p { font-size: 1.15rem; line-height: 1.55; color: var(--ink-2); max-width: 540px; margin: 0 auto; }
 
 /* ---------- Link bar ---------- */
@@ -144,24 +148,61 @@ html, body, .stApp, button, input, textarea, select, [class*="css"] {
 .tile.dark .sub, .tile.dark .label { color: #a3a3a3; }
 .num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: .92em; }
 
-.bar-row { display: grid; grid-template-columns: 76px 1fr 46px; align-items: center; gap: 14px;
-           font-size: .9rem; color: var(--ink-3); margin: 9px 0; }
-.bar-row.strong { color: var(--ink); font-weight: 600; }
-.bar-row .num { text-align: right; }
-.bar-track { height: 6px; background: var(--line-2); border-radius: 99px; overflow: hidden; }
-.bar-fill { height: 6px; border-radius: 99px; background: var(--line); }
-.bar-row.strong .bar-fill { background: var(--ink); }
+/* Swatches: positive = solid, neutral = grey, negative = hatched (readable in pure black & white) */
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 7px; vertical-align: -1px; flex: none; }
+.sw.pos, .seg.pos { background: var(--ink); }
+.sw.neu, .seg.neu { background: #b5b5b5; }
+.sw.neg, .seg.neg { background: repeating-linear-gradient(135deg, var(--ink) 0 2px, var(--paper) 2px 5px); box-shadow: inset 0 0 0 1px var(--ink); }
 
-.meter { position: relative; height: 10px; background: var(--line-2); border-radius: 99px; margin-top: 4px; }
-.meter-fill { height: 10px; border-radius: 99px; background: var(--ink); }
-.meter-thr { position: absolute; top: -5px; width: 2px; height: 20px; background: var(--ink); box-shadow: 0 0 0 2px var(--paper); }
-.meter-scale { position: relative; display: flex; justify-content: space-between; height: 16px; margin-top: 9px;
-               font-family: var(--mono); font-size: .68rem; color: var(--ink-3); }
-.meter-scale span:nth-child(2) { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+/* Reaction mix */
+.mix3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.big { font-size: 2.5rem; font-weight: 500; letter-spacing: -0.04em; line-height: 1; color: var(--ink);
+       font-variant-numeric: tabular-nums; }
+.mix-name { display: flex; align-items: center; font-size: .88rem; color: var(--ink-2); margin-top: 8px; }
+.mix-name .num { color: var(--ink-3); margin-left: 6px; }
+.stack { display: flex; height: 12px; border-radius: 99px; overflow: hidden; margin: 18px 0 2px; background: var(--line-2); }
+.seg { height: 100%; }
+.seg + .seg { border-left: 2px solid var(--paper); }
 
-.reasons { margin: 0; padding-left: 18px; font-size: .88rem; line-height: 1.5; color: var(--ink-2); }
-.reasons li { margin: 4px 0; }
-.reasons li::marker { color: var(--ink-3); }
+/* Post's own tone, insight and footnotes */
+.tone { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.tone > div { border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; font-size: .98rem; color: var(--ink); }
+.tone .label { display: block; margin-bottom: 6px; }
+.tone b { font-weight: 600; }
+.tone .num { color: var(--ink-3); margin-left: 4px; }
+.xpost-counts { display: flex; gap: 18px; flex-wrap: wrap; font-size: .88rem; color: var(--ink-3); margin: -6px 0 16px; }
+.xpost-counts b { color: var(--ink); font-weight: 600; }
+.insight { font-family: var(--serif); font-style: italic; font-size: 1.35rem; line-height: 1.35; color: var(--ink);
+           padding: 4px 4px 0; letter-spacing: -0.01em; }
+.foot { font-size: .78rem; color: var(--ink-3); padding: 0 4px; line-height: 1.6; }
+
+/* Call to action when the replies haven't been read yet */
+.cta { padding: 26px 26px 22px; background: var(--wash); }
+.cta-title { font-family: var(--serif); font-size: 2.2rem; line-height: 1.05; letter-spacing: -0.02em; margin: 2px 0 10px; color: var(--ink); }
+.cta p { color: var(--ink-2); font-size: .95rem; line-height: 1.55; margin: 0; }
+[data-testid="stLinkButton"] a, [data-testid="stBaseLinkButton-primary"] {
+    border-radius: 999px !important; background: var(--ink) !important; color: #fff !important; border: 0 !important;
+    min-height: 48px; padding: 0 24px !important; font-weight: 500 !important; margin-top: 14px;
+}
+[data-testid="stLinkButton"] a p { color: #fff !important; }
+[data-testid="stLinkButton"] a:hover { background: #262626 !important; }
+
+/* What people are saying */
+.section-title { font-family: var(--serif); font-size: 2.6rem; letter-spacing: -0.02em; color: var(--ink);
+                 margin: 72px 0 16px; line-height: 1; }
+/* Row by row, so "most liked first" reads left to right, top to bottom */
+.replies { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; margin-top: 14px; }
+.reply { border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px 14px; background: var(--paper); }
+.reply-head { display: flex; align-items: center; gap: 10px; font-size: .9rem; color: var(--ink); }
+.reply-head b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reply-head .num { margin-left: auto; color: var(--ink-3); font-size: .78rem; white-space: nowrap; }
+.avatar.sm { width: 28px; height: 28px; font-size: .95rem; }
+.reply-text { font-size: 1rem; line-height: 1.5; color: var(--ink); margin: 10px 0 12px; word-wrap: break-word; }
+.tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.tag { display: inline-flex; align-items: center; font-size: .74rem; font-weight: 500; color: var(--ink-2);
+       border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px 3px 8px; }
+.tag .sw { width: 8px; height: 8px; margin-right: 6px; }
+.tag.hate { background: var(--ink); color: #fff; border-color: var(--ink); padding-left: 10px; }
 
 /* ---------- Misc ---------- */
 [data-testid="stSpinner"] { justify-content: center; }
@@ -178,12 +219,13 @@ html, body, .stApp, button, input, textarea, select, [class*="css"] {
 [data-testid="stPopoverBody"], [data-testid="stCaptionContainer"], [data-testid="stWidgetLabel"] {
     font-family: var(--sans) !important;
 }
-.stApp :is(.eyebrow, .col-label, .label, .num, .meter-scale, .meter-scale span, .notice code) {
+.stApp :is(.eyebrow, .col-label, .label, .num, .notice code) {
     font-family: var(--mono) !important;
 }
-.stApp :is(.brand-mark, .avatar, .verdict, .hero h1 em) {
+.stApp :is(.brand-mark, .avatar, .verdict, .hero h1 em, .insight, .cta-title, .section-title) {
     font-family: var(--serif) !important;
 }
+.stApp .big { font-family: var(--sans) !important; }
 /* Headline: tight Geist with an Instrument Serif italic accent */
 .stApp .hero h1, .stApp .hero h1 span {
     font-family: var(--sans) !important; font-weight: 500 !important; letter-spacing: -0.055em !important;
@@ -196,7 +238,10 @@ html, body, .stApp, button, input, textarea, select, [class*="css"] {
     .block-container, [data-testid="stMainBlockContainer"] { padding: 1rem 1rem 3rem !important; }
     .hero { padding: 44px 0 26px; }
     .hero p { font-size: 1.02rem; }
-    .dash-row { grid-template-columns: 1fr; }
+    .dash-row, .tone { grid-template-columns: 1fr; }
+    .replies { grid-template-columns: 1fr; }
+    .big { font-size: 2rem; }
+    .section-title { font-size: 2.1rem; margin-top: 52px; }
     .xpost-text { font-size: 1.12rem; }
     .verdict { font-size: 2.3rem; }
 }

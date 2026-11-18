@@ -1,14 +1,18 @@
 """
-Senti-Q — sentiment and hate-speech analysis for posts on X.
+Senti-Q — how people are reacting to a post on X.
 
 Run:   streamlit run app.py      (or double-click run.bat on Windows)
 
-Open a post by pasting its link, or send one straight from X with the
-"Senti-Q for X" browser extension, which opens  http://localhost:8501/?post=<link>.
+Senti-Q's main job is the *reactions*: it reads the replies to a post and shows how
+people responded (the share of positive, neutral and negative replies), whether the
+post drew hate speech, and the post's own tone. X only shows replies to signed-in
+users, so the "Senti-Q for X" browser extension reads them in the user's own browser
+and opens   /?post=<post link>&r=<packed replies>   (see src/reactions.py).
 """
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from html import escape
 from pathlib import Path
@@ -26,25 +30,17 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-from src import engine, transformer_models, x_links  # noqa: E402  (after page config)
+from src import engine, reactions, transformer_models, x_links  # noqa: E402  (after page config)
 
 st.markdown(f"<style>{(ROOT / 'assets' / 'style.css').read_text(encoding='utf-8')}</style>",
             unsafe_allow_html=True)
+
+READ_MARK = "#senti-q"          # links ending in this make the extension read the replies
 
 
 def _html(s: str) -> None:
     """Render an HTML snippet (indentation stripped so Markdown never treats it as code)."""
     st.markdown("\n".join(line.strip() for line in s.splitlines() if line.strip()), unsafe_allow_html=True)
-
-
-BOOKMARKLET = (
-    "javascript:(()=>{const A='http://localhost:8501',R=/^https:\\/\\/(?:www\\.)?(?:x|twitter)\\.com\\/(?:i\\/web|[^/]+)"
-    "\\/status\\/\\d+/;let u=(location.href.match(R)||[])[0];if(!u){let b=null,d=1e9;document.querySelectorAll"
-    "('article').forEach(a=>{const r=a.getBoundingClientRect();if(r.bottom<0||r.top>innerHeight)return;const "
-    "l=[...a.querySelectorAll('a[href*=\"/status/\"]')].find(x=>x.querySelector('time'));const m=Math.abs(r.top"
-    "+r.height/2-innerHeight/2);if(l&&m<d){d=m;b=l.href}});u=b&&(b.match(R)||[])[0]}if(!u){alert('Senti-Q: "
-    "open or scroll to a post on X first.');return}window.open(A+'/?post='+encodeURIComponent(u),'_blank')})()"
-)
 
 
 # ---------------------------------------------------------------------------
@@ -60,165 +56,268 @@ def _warm_models() -> bool:
     return True
 
 
-def _analyse(raw: str) -> None:
-    """Open the linked posts, run the engine and store the results in the session."""
-    st.session_state.pop("pick", None)          # reset the post picker for the new batch
-    with st.spinner("Opening the post ..."):
-        opened = x_links.open_posts(raw)
-    st.session_state.errors = opened.errors
-    if not opened.posts:
-        st.session_state.results = None
-        return
+def _ensure_models() -> None:
     if transformer_models.available() and not transformer_models.is_loaded():
         with st.spinner("Loading the language models. The first time downloads about 1 GB ..."):
             _warm_models()
-    with st.spinner("Reading the room ..."):
-        df = pd.DataFrame([{
-            "post_id": p.post_id, "text": p.text, "created_at": p.created_at, "username": p.username,
-            "display_name": p.display_name, "url": p.url, "embed_html": p.embed_html,
-        } for p in opened.posts])
-        out = engine.analyze(df["text"].tolist())
-        for col in out.columns:
-            df[col] = out[col].values
-    st.session_state.results = df
+
+
+def _canonical(link: str) -> tuple[str, str] | None:
+    refs = x_links.extract_post_refs(link)
+    if not refs:
+        return None
+    pid, handle = refs[0]
+    return pid, f"https://x.com/{handle or 'i'}/status/{pid}"
+
+
+def _build(link: str, collected: reactions.Collected | None) -> dict:
+    """Open and score the post and, when the extension supplied them, its replies."""
+    found = _canonical(link)
+    if not found:
+        return {"error": "That doesn't look like a link to an X post. It should look like "
+                         "https://x.com/username/status/1234567890."}
+    pid, _ = found
+    handle = x_links.extract_post_refs(link)[0][1]
+
+    post = None
+    if collected and collected.post["id"] == pid and collected.post["text"]:
+        cp = collected.post
+        post = {"id": pid, "handle": cp["handle"] or handle, "name": cp["name"], "text": cp["text"],
+                "created": cp["time"], "likes": cp["likes"], "replies": cp["replies"],
+                "reposts": cp["reposts"], "has_counts": True}
+    else:
+        with st.spinner("Opening the post ..."):
+            p = x_links.fetch_post(pid, handle)
+        if p:
+            post = {"id": pid, "handle": p.username, "name": p.display_name, "text": p.text,
+                    "created": p.created_at, "has_counts": False}
+    if post is None:
+        return {"error": f"Couldn't open post {pid}. It may be private, deleted or age-restricted."}
+    post["url"] = f"https://x.com/{post['handle'] or 'i'}/status/{pid}"
+
+    _ensure_models()
+    with st.spinner("Reading the post ..."):
+        post_scores = engine.analyze([post["text"]]).iloc[0].to_dict()
+
+    result = {"post": post, "post_scores": post_scores, "collected": collected,
+              "replies": None, "summary": None, "skipped_lang": 0}
+    if collected and collected.replies:
+        with st.spinner(f"Reading {len(collected.replies)} replies ..."):
+            df, skipped = reactions.score_replies(collected)
+        result.update(replies=df, summary=reactions.summarize(df), skipped_lang=skipped)
+    return result
 
 
 # ---------------------------------------------------------------------------
-# Rendering helpers
+# Rendering
 # ---------------------------------------------------------------------------
 
-def _post_html(row) -> str:
-    """The post being analysed, styled like a post on X."""
-    name = str(row.get("display_name") or row.get("username") or "Unknown")
-    handle = str(row.get("username") or "")
+def _num(n: int) -> str:
+    return f"{n / 1_000_000:.1f}M" if n >= 1_000_000 else f"{n / 1000:.1f}K" if n >= 10_000 else f"{n:,}"
+
+
+def _post_html(post: dict) -> str:
+    name = str(post.get("name") or post.get("handle") or "Unknown")
+    handle = str(post.get("handle") or "")
     when = ""
-    if pd.notna(row.get("created_at")) and row["created_at"] is not None:
-        when = pd.to_datetime(row["created_at"]).strftime("%d %b %Y")
-    text_html = escape(str(row["text"])).replace("\n", "<br>")
+    if post.get("created"):
+        try:
+            when = pd.to_datetime(post["created"]).strftime("%d %b %Y")
+        except (ValueError, TypeError):
+            when = ""
+    counts = ""
+    if post.get("has_counts"):
+        counts = ('<div class="xpost-counts">'
+                  f'<span><b>{_num(post.get("replies", 0))}</b> replies</span>'
+                  f'<span><b>{_num(post.get("reposts", 0))}</b> reposts</span>'
+                  f'<span><b>{_num(post.get("likes", 0))}</b> likes</span></div>')
     return (
-        '<div class="xpost">'
-        '<div class="xpost-head">'
+        '<div class="xpost"><div class="xpost-head">'
         f'<div class="avatar">{escape(name.strip()[:1].upper() or "?")}</div>'
         f'<div class="who"><b>{escape(name)}</b>{f"<span>@{escape(handle)}</span>" if handle else ""}</div>'
         '<div class="xmark">𝕏</div></div>'
-        f'<div class="xpost-text">{text_html}</div>'
-        '<div class="xpost-foot">'
-        f'<span>{escape(when)}</span>'
-        f'<a href="{escape(str(row["url"]), quote=True)}" target="_blank" rel="noopener noreferrer">'
-        'Open on X &#8599;</a></div>'
-        '</div>'
+        f'<div class="xpost-text">{escape(str(post["text"])).replace(chr(10), "<br>")}</div>'
+        f'{counts}'
+        f'<div class="xpost-foot"><span>{escape(when)}</span>'
+        f'<a href="{escape(post["url"], quote=True)}" target="_blank" rel="noopener noreferrer">Open on X &#8599;</a>'
+        '</div></div>'
     )
 
 
-def _bar_row(label: str, value: float, strong: bool) -> str:
-    return (f'<div class="bar-row{" strong" if strong else ""}"><span>{label}</span>'
-            f'<div class="bar-track"><div class="bar-fill" style="width:{value * 100:.1f}%"></div></div>'
-            f'<span class="num">{value:.0%}</span></div>')
+def _post_tone_html(ps: dict) -> str:
+    sentiment = ps["predicted_sentiment"]
+    prob = ps[f"prob_{sentiment.lower()}"]
+    hate = str(ps.get("hate_severity") or "None")
+    hate_word = {"None": "None", "Offensive": "Offensive", "Hate": "Hate speech", "Severe": "Severe"}.get(hate, hate)
+    return ('<div class="tone">'
+            f'<div><span class="label">The post itself</span><b>{escape(sentiment)}</b> '
+            f'<span class="num">{prob:.0%}</span></div>'
+            f'<div><span class="label">Hate in the post</span><b>{escape(hate_word)}</b></div></div>')
 
 
-def _dashboard_html(row) -> str:
-    """The analysis shown beside the post."""
-    sentiment = row["predicted_sentiment"]
-    probs = {"Positive": row["prob_positive"], "Neutral": row["prob_neutral"], "Negative": row["prob_negative"]}
-    conf = str(row.get("sentiment_confidence") or "")
-    has_hate = "is_hate" in row.index and pd.notna(row.get("is_hate"))
-    flagged = bool(row["is_hate"]) if has_hate else False
-    severity = str(row.get("hate_severity") or ("Hate" if flagged else "None"))
+SW = {"Positive": "pos", "Neutral": "neu", "Negative": "neg"}
 
-    tiles = ('<div class="tile"><div class="label">Sentiment</div>'
-             f'<div class="verdict">{escape(sentiment)}</div>'
-             f'<div class="sub"><span class="num">{probs[sentiment]:.0%}</span> likely'
-             f'{f" &middot; {escape(conf.lower())} confidence" if conf else ""}</div></div>')
-    if has_hate:
-        word = {"None": "None found", "Offensive": "Offensive", "Hate": "Hate speech",
-                "Severe": "Severe hate"}.get(severity, severity)
-        tiles += (f'<div class="tile{" dark" if flagged else ""}"><div class="label">Hate speech</div>'
-                  f'<div class="verdict">{escape(word)}</div>'
-                  f'<div class="sub">{"Flagged" if flagged else "Not flagged"} &middot; '
-                  f'score <span class="num">{row["prob_hate"]:.1%}</span></div></div>')
-    html = f'<div class="dash"><div class="dash-row">{tiles}</div>'
 
-    html += ('<div class="tile"><div class="label">How it reads</div>'
-             + "".join(_bar_row(k, v, k == sentiment) for k, v in probs.items()) + "</div>")
+def _reactions_html(s: reactions.Summary, a: dict) -> str:
+    collected: reactions.Collected = a["collected"]
+    margin = f" &middot; &plusmn;<span class='num'>{s.margin * 100:.0f}</span> pts" if s.margin else " &middot; small sample"
+    html = ('<div class="dash">'
+            '<div class="tile"><div class="label">Overall response</div>'
+            f'<div class="verdict">{escape(s.verdict)}</div>'
+            f'<div class="sub">from <span class="num">{s.n}</span> replies{margin}</div></div>')
 
-    if has_hate:
-        thr = engine.hate_threshold()
-        score = float(row["prob_hate"])
-        html += ('<div class="tile"><div class="label">Hate score</div>'
-                 f'<div class="meter"><div class="meter-fill" style="width:{score * 100:.1f}%"></div>'
-                 f'<div class="meter-thr" style="left:{thr * 100:.0f}%"></div></div>'
-                 f'<div class="meter-scale"><span>0</span><span style="left:{thr * 100:.0f}%">'
-                 f'flagged above {thr:.0%}</span><span>100</span></div></div>')
+    cells = "".join(
+        f'<div><div class="big">{s.shares[k]:.0%}</div>'
+        f'<div class="mix-name"><i class="sw {SW[k]}"></i>{k} <span class="num">{s.counts[k]}</span></div></div>'
+        for k in reactions.LABELS)
+    segs = "".join(f'<div class="seg {SW[k]}" style="width:{s.shares[k] * 100:.2f}%"></div>' for k in reactions.LABELS)
+    liked = " &middot; ".join(f"{s.liked_shares[k]:.0%} {k.lower()}" for k in reactions.LABELS)
+    html += ('<div class="tile"><div class="label">How people reacted</div>'
+             f'<div class="mix3">{cells}</div><div class="stack">{segs}</div>'
+             f'<div class="sub">Weighted by likes: {liked}</div></div>')
 
-    reasons = []
-    for key in ("sentiment_notes", "hate_notes"):
-        val = row.get(key)
-        if isinstance(val, (list, tuple)):
-            reasons += [str(v) for v in val]
-    if reasons:
-        html += ('<div class="tile"><div class="label">Why</div><ul class="reasons">'
-                 + "".join(f"<li>{escape(r)}</li>" for r in reasons[:5]) + "</ul></div>")
+    flagged = s.hate_n > 0
+    if flagged:
+        head = f'{s.hate_n} {"reply" if s.hate_n == 1 else "replies"}'
+        detail = f'<span class="num">{s.hate_share:.0%}</span> of replies'
+        if s.severe_n:
+            detail += f' &middot; {s.severe_n} severe'
+    else:
+        head, detail = "None found", f'0 of {s.n} replies'
+    if s.offensive_n:
+        detail += f' &middot; {s.offensive_n} offensive'
+    html += (f'<div class="tile{" dark" if flagged else ""}"><div class="label">Hate speech received</div>'
+             f'<div class="verdict">{head}</div><div class="sub">{detail}</div></div>')
+
+    line = reactions.reception(a["post_scores"]["predicted_sentiment"], s)
+    if line:
+        html += f'<div class="insight">{escape(line)}</div>'
+
+    notes = []
+    if collected.collected_at is not None:
+        notes.append(f"Read from X in your browser at {collected.collected_at.astimezone().strftime('%H:%M')}")
+    if a["skipped_lang"]:
+        notes.append(f"{a['skipped_lang']} replies in other languages not scored")
+    if collected.media_only:
+        notes.append(f"{collected.media_only} image-only replies")
+    if collected.self_replies:
+        notes.append(f"{collected.self_replies} by the author left out")
+    if collected.trimmed:
+        notes.append(f"{collected.trimmed} more not included")
+    if notes:
+        html += f'<div class="foot">{" &middot; ".join(notes)}</div>'
     return html + "</div>"
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def _embed_for(post_id: str, handle: str) -> str:
-    p = x_links.fetch_post(post_id, handle)
-    return p.embed_html if p else ""
+def _cta(post: dict, text: str, title: str = "See how people reacted") -> None:
+    _html(f'<div class="tile cta"><div class="label">The reactions</div>'
+          f'<div class="cta-title">{escape(title)}</div><p>{text}</p></div>')
+    st.link_button("Read the replies on X  ↗", post["url"] + READ_MARK, type="primary")
+    st.caption("This needs the Senti-Q for X extension (see **Get the extension** at the top). "
+               "The replies are read in your own signed-in browser and brought back here.")
 
 
-def _render_result(df: pd.DataFrame) -> None:
-    if len(df) > 1:
-        labels = {i: f"{i + 1} · @{df.iloc[i]['username'] or 'post'}" for i in range(len(df))}
-        pick = st.pills("Posts", options=list(labels), format_func=labels.get, default=0,
-                        key="pick", label_visibility="collapsed")
-        row = df.iloc[pick if pick is not None and pick < len(df) else 0]
+def _reply_cards(df: pd.DataFrame) -> str:
+    cards = []
+    for _, r in df.iterrows():
+        sentiment = r["predicted_sentiment"]
+        tags = f'<span class="tag"><i class="sw {SW[sentiment]}"></i>{sentiment}</span>'
+        if bool(r.get("is_hate", False)):
+            severe = r.get("hate_severity") == "Severe"
+            tags += f'<span class="tag hate">{"Hate &middot; Severe" if severe else "Hate speech"}</span>'
+        elif r.get("hate_severity") == "Offensive":
+            tags += '<span class="tag">Offensive</span>'
+        handle = str(r.get("handle") or "")
+        likes = int(r.get("likes", 0))
+        cards.append(
+            '<div class="reply"><div class="reply-head">'
+            f'<span class="avatar sm">{escape((handle[:1] or "?").upper())}</span>'
+            f'<b>{"@" + escape(handle) if handle else "Reply"}</b>'
+            f'{f"<span class=num>{_num(likes)} likes</span>" if likes else ""}</div>'
+            f'<div class="reply-text">{escape(str(r["text"])).replace(chr(10), "<br>")}</div>'
+            f'<div class="tags">{tags}</div></div>')
+    return f'<div class="replies">{"".join(cards)}</div>'
+
+
+def _render_replies(df: pd.DataFrame) -> None:
+    _html('<div class="section-title">What people are saying</div>')
+    hate_n = int(df["is_hate"].sum()) if "is_hate" in df.columns else 0
+    options = {"All": len(df)}
+    options.update({k: int((df["predicted_sentiment"] == k).sum()) for k in reactions.LABELS})
+    if "is_hate" in df.columns:
+        options["Hate speech"] = hate_n
+    choice = st.pills("Filter", options=list(options), default="All", key="reply_filter",
+                      format_func=lambda o: f"{o}  {options[o]}", label_visibility="collapsed") or "All"
+    if choice == "Hate speech":
+        shown = df[df["is_hate"]]
+    elif choice in reactions.LABELS:
+        shown = df[df["predicted_sentiment"] == choice]
     else:
-        row = df.iloc[0]
+        shown = df
+    if shown.empty:
+        _html('<div class="notice">No replies in this group.</div>')
+        return
+    limit = 24
+    if len(shown) > limit and not st.toggle(f"Show all {len(shown)}", key="show_all_replies"):
+        shown = shown.head(limit)
+    _html(_reply_cards(shown))
 
-    left, right = st.columns([5, 6], gap="large")
+
+def _render(a: dict) -> None:
+    post, collected, summary = a["post"], a["collected"], a["summary"]
+    left, right = st.columns([5, 7], gap="large")
     with left:
         _html('<div class="col-label">The post</div>')
-        _html(_post_html(row))
-        if st.toggle("Show it exactly as it appears on X", key=f"embed_{row['post_id']}"):
-            embed = row.get("embed_html") or _embed_for(str(row["post_id"]), str(row.get("username", "")))
-            if embed:
-                import streamlit.components.v1 as components
-                components.html(embed + '<script async src="https://platform.twitter.com/widgets.js" '
-                                'charset="utf-8"></script>', height=640, scrolling=True)
-            else:
-                st.caption("X didn't return an embeddable version of this post.")
+        _html(_post_html(post))
+        _html(_post_tone_html(a["post_scores"]))
     with right:
-        _html('<div class="col-label">The analysis</div>')
-        _html(_dashboard_html(row))
+        _html('<div class="col-label">The reactions</div>')
+        if collected is not None and collected.error == "login":
+            _cta(post, "X asked for a sign-in, so the replies couldn't be read. Sign in to X in this "
+                       "browser, then try again.", "Sign in to X first")
+        elif collected is not None and collected.error:
+            _cta(post, "Senti-Q couldn't find this post on X. It may have been deleted or made "
+                       "private.", "Post not found on X")
+        elif summary is not None and summary.n > 0:
+            _html(_reactions_html(summary, a))
+        elif collected is not None:
+            extra = f" ({collected.media_only} image-only replies were skipped.)" if collected.media_only else ""
+            _cta(post, "No written replies were found on this post yet." + escape(extra), "No replies yet")
+        else:
+            _cta(post, "X only shows replies to people who are signed in, so Senti-Q reads them in "
+                       "your own browser and brings them back here. Nothing is stored.")
+    if a["replies"] is not None and len(a["replies"]):
+        _render_replies(a["replies"])
 
 
 # ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
-if "results" not in st.session_state:
-    st.session_state.results = None
-    st.session_state.errors = []
+if "analysis" not in st.session_state:
+    st.session_state.analysis = None
+    st.session_state.analysis_id = None
+    st.session_state.ingested = None
 
 with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
     _html('<div class="brand"><span class="brand-mark">Q</span>Senti-Q</div>')
-    with st.popover("Use it on X", width="content"):
-        st.markdown("**Analyse posts straight from X**")
+    with st.popover("Get the extension", width="content"):
+        st.markdown("**Senti-Q for X** reads the replies to a post in your own signed-in browser "
+                    "and brings them here. It never touches your password or account.")
         st.markdown(
-            "Stay signed in to X in your own browser. Senti-Q never asks for your X password.\n\n"
-            "1. Open `chrome://extensions` (or `edge://extensions`), switch on **Developer mode**, "
-            "click **Load unpacked** and choose the `browser-extension` folder in this project.\n"
-            "2. On X, click the **Senti-Q** icon in your toolbar. It analyses the post in the middle "
-            "of your screen. Or right-click any post's timestamp and choose **Analyse with Senti-Q**."
+            "1. Open `chrome://extensions` (or `edge://extensions`) and switch on **Developer mode**.\n"
+            "2. Click **Load unpacked** and choose the `browser-extension` folder in this project.\n"
+            "3. Pin **Senti-Q for X** to your toolbar.\n\n"
+            "**Then:** open any post on X and click the Senti-Q icon. Or paste a link here and press "
+            "**Read the replies on X**."
         )
-        st.markdown("**No install?** Save a bookmark with this as its address, then click it on X:")
-        st.code(BOOKMARKLET, language=None, wrap_lines=True)
 
-_html("""
-<div class="hero">
-  <div class="eyebrow">Sentiment &amp; hate-speech analysis for X</div>
+_has_result = bool(st.query_params.get("post") or st.query_params.get("r") or st.session_state.analysis)
+_html(f"""
+<div class="hero{' compact' if _has_result else ''}">
+  <div class="eyebrow">Reaction analysis for X</div>
   <h1>Read the <em>room.</em></h1>
-  <p>Paste a link to any public post on X. Senti-Q tells you how it feels, and whether it crosses the line.</p>
+  <p>Senti-Q reads the replies to any post on X and shows how people are reacting: how positive,
+     negative or neutral, and whether the post is drawing hate.</p>
 </div>
 """)
 
@@ -227,12 +326,34 @@ if not status["ready"]:
     _html('<div class="notice dark"><b>Setup isn\'t finished.</b> Close this tab and double-click '
           '<code>run.bat</code> in the project folder. It installs everything the first time.</div>')
 
-# Deep link from the browser extension / bookmarklet:  /?post=<link>
-deep_link = st.query_params.get("post")
-run_deep_link = bool(deep_link) and st.session_state.get("_handled_link") != deep_link
-if run_deep_link:
-    st.session_state["_handled_link"] = deep_link
-    st.session_state["link_input"] = deep_link
+# --- links coming in:  /?post=<link>  (just the post)  or  /?post=<link>&r=<packed replies> ---
+qp_post = st.query_params.get("post", "")
+qp_r = st.query_params.get("r", "")
+if status["ready"] and qp_r:
+    digest = hashlib.sha1(qp_r.encode()).hexdigest()
+    if st.session_state.ingested != digest:
+        st.session_state.ingested = digest
+        try:
+            collected = reactions.decode(qp_r)
+        except ValueError:
+            collected = None
+            st.session_state.analysis = {"error": "This reactions link is damaged or incomplete. "
+                                                  "Click Senti-Q on X again."}
+        if collected is not None:
+            link = qp_post or collected.post_url or f"https://x.com/i/status/{collected.post['id']}"
+            st.session_state.analysis = _build(link, collected)
+            found = _canonical(link)
+            if found:
+                st.session_state.analysis_id = found[0]
+                st.session_state["link_input"] = found[1]
+                st.query_params.clear()                 # tidy the address bar: keep just the post
+                st.query_params["post"] = found[1]
+elif status["ready"] and qp_post:
+    found = _canonical(qp_post)
+    if found and found[0] != st.session_state.analysis_id:
+        st.session_state["link_input"] = found[1]
+        st.session_state.analysis = _build(qp_post, None)
+        st.session_state.analysis_id = found[0]
 
 with st.form("open_post", border=False):
     c_in, c_btn = st.columns([5, 1], vertical_alignment="bottom")
@@ -241,22 +362,26 @@ with st.form("open_post", border=False):
                       placeholder="Paste a post link, e.g. https://x.com/username/status/1234567890")
     with c_btn:
         submitted = st.form_submit_button("Analyse", width="stretch", disabled=not status["ready"])
-_html('<div class="hint">Paste several links separated by spaces to compare posts.</div>')
+_html('<div class="hint">Paste a post link, or open the post on X and click the Senti-Q extension.</div>')
 
-link = (st.session_state.get("link_input") or "").strip()
-if status["ready"] and ((submitted and link) or run_deep_link):
-    _analyse(link)
-    first = x_links.extract_post_refs(link)
-    if first:
-        pid, handle = first[0]
-        st.query_params["post"] = f"https://x.com/{handle or 'i'}/status/{pid}"
-        st.session_state["_handled_link"] = st.query_params["post"]
+if submitted and status["ready"]:
+    link = (st.session_state.get("link_input") or "").strip()
+    found = _canonical(link)
+    if not found:
+        st.session_state.analysis = _build(link, None)          # produces the friendly error
+        st.session_state.analysis_id = None
+    elif found[0] != st.session_state.analysis_id or st.session_state.analysis is None \
+            or st.session_state.analysis.get("error"):
+        st.session_state.analysis = _build(link, None)
+        st.session_state.analysis_id = found[0]
+        st.query_params.clear()
+        st.query_params["post"] = found[1]
 
-for err in st.session_state.errors:
-    _html(f'<div class="notice">{escape(err)}</div>')
-
-if st.session_state.results is not None:
-    _render_result(st.session_state.results)
+a = st.session_state.analysis
+if a and a.get("error"):
+    _html(f'<div class="notice">{escape(a["error"])}</div>')
+elif a:
+    _render(a)
 
 _html('<div class="footer">Senti-Q &middot; Automated estimates, not verdicts. '
       'Sarcasm and coded language can still fool it.</div>')

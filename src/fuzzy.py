@@ -182,6 +182,54 @@ def fuse_sentiment(p_t: np.ndarray | None, p_l: np.ndarray | None, cues: Cues,
 
 
 # ---------------------------------------------------------------------------
+# Overall response to a post (the replies as a whole)
+# ---------------------------------------------------------------------------
+
+RESPONSE_LABELS = ["Overwhelmingly positive", "Mostly positive", "Mixed", "Mostly neutral",
+                   "Mostly negative", "Overwhelmingly negative"]
+
+
+def response_verdict(pos: float, neu: float, neg: float) -> tuple[str, dict]:
+    """
+    Describe how a post was received, from the shares (0-1) of positive, neutral and
+    negative replies.
+
+    Inputs are fuzzified into linguistic sets:
+      * net tone = pos - neg       -> very negative / negative / balanced / positive / very positive
+      * neutral share              -> high
+    and combined with rules such as
+      IF net tone is very positive AND neutral share is NOT high THEN "Overwhelmingly positive"
+      IF net tone is balanced      AND neutral share is NOT high THEN "Mixed" (people disagree)
+      IF neutral share is high                                   THEN "Mostly neutral"
+    The label whose rule fires most strongly wins. Returns (label, rule strengths).
+    """
+    total = pos + neu + neg
+    if total <= 0:
+        return "No reactions", {}
+    pos, neu, neg = pos / total, neu / total, neg / total
+    net = pos - neg
+
+    very_neg = trap(net, -2, -1, -0.55, -0.35)
+    negm     = tri(net, -0.6, -0.3, -0.05)
+    balanced = tri(net, -0.2, 0.0, 0.2)
+    posm     = tri(net, 0.05, 0.3, 0.6)
+    very_pos = trap(net, 0.35, 0.55, 1, 2)
+    neu_high = trap(neu, 0.4, 0.55, 1, 2)
+    not_neu = 1 - neu_high
+
+    strengths = {
+        "Overwhelmingly positive": min(very_pos, not_neu),
+        "Mostly positive":         min(posm, not_neu),
+        "Mixed":                   min(balanced, not_neu),
+        "Mostly neutral":          neu_high,
+        "Mostly negative":         min(negm, not_neu),
+        "Overwhelmingly negative": min(very_neg, not_neu),
+    }
+    label = max(RESPONSE_LABELS, key=lambda k: strengths[k])   # ties: earlier label in the list
+    return label, strengths
+
+
+# ---------------------------------------------------------------------------
 # Hate-speech fusion
 # ---------------------------------------------------------------------------
 

@@ -1,9 +1,17 @@
 # Senti-Q
 
-**Sentiment and hate-speech analysis for posts on X (Twitter).** Paste a link to any
-public post, or send one straight from X with the browser extension. Senti-Q shows
-the post beside an analysis of how it reads (positive / neutral / negative) and
-whether it contains hate speech, with a plain-English "why" for every verdict.
+**How are people reacting to a post on X (Twitter)?** Senti-Q reads the replies to a
+post and shows:
+
+* the **reaction mix**: what share of replies are positive, neutral and negative
+  (also weighted by likes)
+* an **overall response** verdict from fuzzy logic: *Overwhelmingly positive*,
+  *Mostly positive*, *Mixed*, *Mostly neutral*, *Mostly negative* or
+  *Overwhelmingly negative*
+* the **hate speech the post received**: how many replies are hateful, and how severe
+* the **post's own tone**, plus a one-line comparison ("Backlash: an upbeat post drew
+  mostly negative replies")
+* every reply, labelled and filterable
 
 Final-year college project.
 
@@ -33,26 +41,48 @@ The first analysis downloads the two RoBERTa language models (~1 GB, cached afte
 
 ## Use it
 
-* **Paste a link** like `https://x.com/username/status/1234567890` and press **Analyse**.
-  Paste several links separated by spaces to compare posts.
-* **Straight from X:** install the *Senti-Q for X* extension
-  (see [`browser-extension/README.md`](browser-extension/README.md)). While you browse X,
-  signed in to your own account in your own browser, click its icon to analyse the post
-  in the middle of your screen, or right-click a post → **Analyse with Senti-Q**.
-  A no-install bookmarklet is in the app under **Use it on X**.
-* Every result is also a shareable link: `http://localhost:8501/?post=<post link>`.
+First install the **Senti-Q for X** browser extension (one minute; see
+[`browser-extension/README.md`](browser-extension/README.md)). Then either:
 
-**How posts are opened:** Senti-Q never searches or queries X and needs no API key. It
-opens only the post links you give it, through X's public embed (oEmbed) endpoint, the
-same way any website embeds a post. Private, deleted or age-restricted posts can't be
-opened.
+* **Paste a post link** like `https://x.com/username/status/1234567890` and press
+  **Analyse**. Senti-Q shows the post; press **Read the replies on X**. The post opens in
+  your signed-in X, the extension reads the replies, and you're brought straight back to
+  the results (about 10–30 seconds).
+* **Or start on X:** open any post and click the Senti-Q icon in your toolbar. On a
+  timeline, the icon reads the post in the middle of your screen. You can also right-click
+  a post's timestamp → **Read the reactions with Senti-Q**.
+
+**Why an extension?** X only shows replies to people who are signed in. Senti-Q doesn't
+use the X API, doesn't search X and never asks for your X password. The extension reads
+the replies *you* can see on the post's page, in your own browser, and hands them to
+Senti-Q inside the link it opens. Nothing is stored. Without the extension, Senti-Q can
+still open the post itself (via X's public embed) and show its tone.
+
+**How many replies?** 100 by default (50–300 in the extension's options), in the order
+X shows them. Replies hidden behind *Show more replies* / *Show probable spam* are
+included. The author's own replies, ads, image-only replies and X's unrelated
+*Discover more* posts are left out. Replies that aren't in English are counted but not
+scored, because the models are English-only.
 
 ---
 
 ## How it works
 
 ```
-post text ─┬─► RoBERTa sentiment  (cardiffnlp/twitter-roberta-base-sentiment-latest) ─┐
+X post page (your browser)
+   │  Senti-Q for X extension: scrolls the conversation, collects up to N replies,
+   │  packs them (JSON → raw deflate → base64url) into the Senti-Q link
+   ▼
+Senti-Q  /?post=<link>&r=<packed replies>   →  src/reactions.py
+   │  decode + validate (size limits, zip-bomb guard) → score every reply → summarise
+   ▼
+reaction mix % · likes-weighted mix · fuzzy overall response · hate received · post's own tone
+```
+
+Each reply, and the post itself, is scored by the engine:
+
+```
+text ──────┬─► RoBERTa sentiment  (cardiffnlp/twitter-roberta-base-sentiment-latest) ─┐
            ├─► VADER lexicon      (emoji, CAPS, "!!!", intensifiers) ─────────────────┼─► fuzzy fusion ─► sentiment + confidence
            ├─► TF-IDF + Logistic Regression ─────────────────────────────────────────┘
            ├─► RoBERTa hate       (cardiffnlp/twitter-roberta-base-hate-latest) ──────┐
@@ -70,10 +100,22 @@ post text ─┬─► RoBERTa sentiment  (cardiffnlp/twitter-roberta-base-senti
    * IF a sarcasm marker appears AND the post sounds positive THEN shift toward negative
    * IF an identity group is mentioned AND dehumanising / exclusion / threat language is present THEN hate is high
    * IF there is profanity but no targeted group THEN *offensive, not hate*
-3. **Defuzzify** with the firing-strength-weighted average. The strongest rules become
-   the "Why" list in the app.
+3. **Defuzzify** with the firing-strength-weighted average.
 
 The rule strengths are learned on the validation split (`python -m src.evaluate`).
+
+**Overall response** (`fuzzy.response_verdict`): a second fuzzy rule base over the
+reply shares.
+
+* **Inputs:** *net tone* = %positive − %negative (*very negative … very positive*) and
+  the *neutral share* (*high*).
+* **Example rules:**
+  * IF net tone is very positive AND neutral share is NOT high THEN *Overwhelmingly positive*
+  * IF net tone is balanced AND neutral share is NOT high THEN *Mixed*
+* **Output:** the strongest-firing label wins.
+
+The app also shows a 95% margin of error for the main share, so small samples aren't
+over-read.
 
 ## Results
 
@@ -131,7 +173,10 @@ app.py                     Senti-Q web app (Streamlit)
 run.bat                    One-click Windows launcher
 assets/                    style.css (design system), favicon
 browser-extension/         "Senti-Q for X" Chrome/Edge extension
+  content.js               Reads the replies on a post's page (only when asked)
+  background.js            Packs them into the Senti-Q link, manages tabs
 src/
+  reactions.py             Decodes the replies, scores them, summarises the response
   x_links.py               Open X posts from their links (oEmbed)
   engine.py                analyze(): runs every model and the fuzzy fusion
   fuzzy.py                 Fuzzy inference system
@@ -153,12 +198,20 @@ tests/                     pytest suite (pytest tests -q)
 * The hate-speech training data focuses on English posts about immigrants and women.
   Other targets and languages are weaker.
 * Only public posts can be opened. Text inside images and videos isn't analysed.
+* The reactions are the replies X chose to show you, in X's order. That's a sample, not
+  every reply, and X ranks some replies lower or hides them.
+* The extension depends on how X's web page is built. If X changes its page structure,
+  `browser-extension/content.js` may need updating. It was tested against a replica of
+  X's post page, not the live site.
 
 ## Troubleshooting
 
 * **"This site can't be reached" at localhost:8501.** The server isn't running yet. Keep
   the `run.bat` window open and wait for your browser to open by itself; the first run
   takes several minutes.
+* **"Read the replies on X" opens X but nothing comes back.** The extension isn't
+  installed or enabled, or you aren't signed in to X in that browser. After installing or
+  updating the extension, reload any open X tabs.
 * **The extension does nothing.** Make sure Senti-Q is running. On a timeline, scroll a
   post into the middle of the screen before clicking. If you host Senti-Q at a different
   address, set it under the extension's **Options**.
