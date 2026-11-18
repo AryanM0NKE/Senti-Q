@@ -1,0 +1,70 @@
+{
+  "date": "2026-11-18 22:21",
+  "protocol": "TweetEval official splits. TF-IDF trained on train only; fuzzy rule scales learned on validation only; hate threshold fixed at 0.5; all scores on the held-out test split. Note: the fuzzy hate rules were revised to first-order consequents after an earlier test run, so the test set was seen during design.",
+  "sentiment": {
+    "n_test": 12284,
+    "support_scale": 0.75,
+    "old_tfidf": {
+      "accuracy": 0.595,
+      "macro_f1": 0.5657,
+      "macro_recall": 0.5713
+    },
+    "vader_only": {
+      "accuracy": 0.5475,
+      "macro_f1": 0.5415,
+      "macro_recall": 0.5694
+    },
+    "roberta_only": {
+      "accuracy": 0.7217,
+      "macro_f1": 0.724,
+      "macro_recall": 0.7351
+    },
+    "fuzzy_untuned": {
+      "accuracy": 0.7178,
+      "macro_f1": 0.7175,
+      "macro_recall": 0.7293
+    },
+    "fuzzy_ensemble": {
+      "accuracy": 0.7194,
+      "macro_f1": 0.7198,
+      "macro_recall": 0.7312
+    }
+  },
+  "hate": {
+    "n_test": 2970,
+    "threshold": 0.5,
+    "support_scale": 0.0,
+    "cue_scale": 0.0,
+    "old_tfidf": {
+      "accuracy": 0.4832,
+      "macro_f1": 0.4295,
+      "f1_hate": 0.6045,
+      "recall_hate": 0.9369
+    },
+    "roberta_only": {
+      "accuracy": 0.867,
+      "macro_f1": 0.8666,
+      "f1_hate": 0.8588,
+      "recall_hate": 0.9593
+    },
+    "fuzzy_untuned": {
+      "accuracy": 0.8646,
+      "macro_f1": 0.8642,
+      "f1_hate": 0.8568,
+      "recall_hate": 0.9609
+    },
+    "fuzzy_ensemble": {
+      "accuracy": 0.867,
+      "macro_f1": 0.8666,
+      "f1_hate": 0.8588,
+      "recall_hate": 0.9593
+    }
+  },
+  "tuned_hate_threshold": 0.5,
+  "tuned": {
+    "sentiment_support_scale": 0.75,
+    "hate_support_scale": 0.0,
+    "hate_cue_scale": 0.0,
+    "hate_threshold": 0.5
+  }
+}

@@ -84,27 +84,43 @@ def _m_hate(y, pred) -> dict:
             "recall_hate": round(recall_score(y, pred, pos_label=1), 4)}
 
 
+SCALES = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]
+
+
+def _fuse_sent(p_t, p_l, cues, scale):
+    return np.array([fuzzy.fuse_sentiment(p_t[i] if p_t is not None else None, p_l[i], c, scale).probs
+                     for i, c in enumerate(cues)])
+
+
 def sentiment(limit):
     print("\n== Sentiment (TweetEval official test) ==")
     d = _load("sentiment")
-    test = _sample(d["test"], limit)
-    y = test["label"].to_numpy()
-    texts = test["text"].tolist()
+    val, test = d["validation"], _sample(d["test"], limit)
+    y_val, y = val["label"].to_numpy(), test["label"].to_numpy()
 
-    (p_l,) = _tfidf_probs(d["train"], [test], balanced=False)
-    p_t = (_cached(f"sent_test_{limit}", transformer_models.sentiment_probs, texts)
-           if transformer_models.available() else None)
-    cues = [lexicon.extract(t) for t in texts]
+    p_l_val, p_l = _tfidf_probs(d["train"], [val, test], balanced=False)
+    avail = transformer_models.available()
+    p_t_val = _cached("sent_val", transformer_models.sentiment_probs, val["text"].tolist()) if avail else None
+    p_t = (_cached(f"sent_test_{limit}", transformer_models.sentiment_probs, test["text"].tolist())
+           if avail else None)
+    cues_val = [lexicon.extract(t) for t in val["text"]]
+    cues = [lexicon.extract(t) for t in test["text"]]
     p_v = np.array([fuzzy.vader_to_probs(c.vader_compound) for c in cues])
 
-    res = {"n_test": len(test),
+    # Learn the support-expert scale on VALIDATION (TweetEval's official metric: macro recall)
+    val_scores = {s: recall_score(y_val, _fuse_sent(p_t_val, p_l_val, cues_val, s).argmax(1), average="macro")
+                  for s in SCALES}
+    scale = max(val_scores, key=val_scores.get)
+    print(f"   validation macro recall by support scale: "
+          + ", ".join(f"{s}: {v:.4f}" for s, v in val_scores.items()) + f"  -> chose {scale}")
+
+    res = {"n_test": len(test), "support_scale": scale,
            "old_tfidf": _m_sent(y, p_l.argmax(1)),
            "vader_only": _m_sent(y, p_v.argmax(1))}
     if p_t is not None:
         res["roberta_only"] = _m_sent(y, p_t.argmax(1))
-    fused = np.array([fuzzy.fuse_sentiment(p_t[i] if p_t is not None else None, p_l[i], c).probs
-                      for i, c in enumerate(cues)])
-    res["fuzzy_ensemble"] = _m_sent(y, fused.argmax(1))
+    res["fuzzy_untuned"] = _m_sent(y, _fuse_sent(p_t, p_l, cues, 1.0).argmax(1))
+    res["fuzzy_ensemble"] = _m_sent(y, _fuse_sent(p_t, p_l, cues, scale).argmax(1))
     for k, v in res.items():
         print(f"   {k:16s} {v}")
     return res
@@ -120,25 +136,36 @@ def hate(limit):
     p_t_test = (_cached(f"hate_test_{limit}", transformer_models.hate_probs, test["text"].tolist())
                 if avail else None)
 
-    def scores(df, p_t, p_l):
-        return np.array([fuzzy.fuse_hate(p_t[i] if p_t is not None else None, p_l[i],
-                                         lexicon.extract(t), threshold=0.5).score
-                         for i, t in enumerate(df["text"])])
+    cues_val = [lexicon.extract(t) for t in val["text"]]
+    cues_test = [lexicon.extract(t) for t in test["text"]]
 
-    # Tune the decision threshold on VALIDATION only
-    s_val = scores(val, p_t_val, p_l_val)
-    grid = np.round(np.arange(0.2, 0.81, 0.02), 2)
-    f1s = [f1_score(val["label"], (s_val >= g).astype(int), average="macro") for g in grid]
-    thr = float(grid[int(np.argmax(f1s))])
-    print(f"   tuned threshold on validation: {thr}")
+    def scores(p_t, p_l, cues, sup, cue):
+        return np.array([fuzzy.fuse_hate(p_t[i] if p_t is not None else None, p_l[i], c,
+                                         threshold=0.5, support_scale=sup, cue_scale=cue).score
+                         for i, c in enumerate(cues)])
+
+    # Learn the rule scales on VALIDATION only (official metric: macro F1). The decision
+    # threshold stays at 0.5: HatEval's test set was deliberately sampled from a different
+    # distribution than its dev set, so a threshold tuned on dev does not transfer.
+    thr = fuzzy.HATE_THRESHOLD
+    best = (-1.0, 1.0, 1.0)
+    for sup in (0.0, 0.25, 0.5, 1.0):
+        for cue in (0.0, 0.25, 0.5, 1.0):
+            s_val = scores(p_t_val, p_l_val, cues_val, sup, cue)
+            f = f1_score(val["label"], (s_val >= thr).astype(int), average="macro")
+            if f > best[0] + 1e-9:
+                best = (f, sup, cue)
+    _, sup, cue = best
+    print(f"   chosen on validation: support_scale={sup} cue_scale={cue} threshold={thr} "
+          f"(val macro F1 {best[0]:.4f})")
 
     y = test["label"].to_numpy()
-    s_test = scores(test, p_t_test, p_l_test)
-    res = {"n_test": len(test), "threshold": thr,
+    res = {"n_test": len(test), "threshold": thr, "support_scale": sup, "cue_scale": cue,
            "old_tfidf": _m_hate(y, (p_l_test >= 0.5).astype(int))}
     if p_t_test is not None:
         res["roberta_only"] = _m_hate(y, (p_t_test >= 0.5).astype(int))
-    res["fuzzy_ensemble"] = _m_hate(y, (s_test >= thr).astype(int))
+    res["fuzzy_untuned"] = _m_hate(y, (scores(p_t_test, p_l_test, cues_test, 1.0, 1.0) >= 0.5).astype(int))
+    res["fuzzy_ensemble"] = _m_hate(y, (scores(p_t_test, p_l_test, cues_test, sup, cue) >= thr).astype(int))
     for k, v in res.items():
         print(f"   {k:16s} {v}")
     return res, thr
@@ -153,9 +180,15 @@ def main():
     hate_res, thr = hate(args.limit)
     out = {
         "date": time.strftime("%Y-%m-%d %H:%M"),
-        "protocol": ("TweetEval official splits. TF-IDF trained on train only; hate threshold tuned "
-                     "on validation only; all scores on the held-out test split."),
+        "protocol": ("TweetEval official splits. TF-IDF trained on train only; fuzzy rule scales learned "
+                     "on validation only; hate threshold fixed at 0.5; all scores on the held-out test split. "
+                     "Note: the fuzzy hate rules were revised to first-order consequents after an earlier "
+                     "test run, so the test set was seen during design."),
         "sentiment": sent, "hate": hate_res, "tuned_hate_threshold": thr,
+        "tuned": {"sentiment_support_scale": sent["support_scale"],
+                  "hate_support_scale": hate_res["support_scale"],
+                  "hate_cue_scale": hate_res["cue_scale"],
+                  "hate_threshold": thr},
     }
     OUT.write_text(json.dumps(out, indent=2), encoding="utf-8")
     print(f"\nSaved {OUT}")

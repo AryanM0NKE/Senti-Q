@@ -65,6 +65,32 @@ expert alone and the fuzzy ensemble on TweetEval's official test splits. The
 baselines are trained on the train split only, and the hate threshold is tuned on
 the validation split only. Results are saved to `models/benchmark.json` and shown in the app.
 
+### Results (TweetEval official test sets)
+
+| Engine | Sentiment accuracy (12,284 tweets) | Hate-speech accuracy (2,970 tweets) |
+|---|---|---|
+| Original TF-IDF + Logistic Regression | 59.5% | 48.3% |
+| VADER lexicon only | 54.8% | n/a |
+| RoBERTa only | 72.2% | 86.7% |
+| Fuzzy ensemble, hand-set rules | 71.8% | 86.5% |
+| **Fuzzy ensemble, learned rules (shipped)** | **71.9%** | **86.7%** |
+
+**What this shows:**
+* The accuracy gain comes from the transformers: +12.4 points on sentiment and
+  +38.4 on hate.
+* On this benchmark the fuzzy layer is accuracy-neutral. For hate, validation
+  learned to switch the cue rules' influence on the score off, so the score
+  equals RoBERTa's. For sentiment it's within 0.2 points of RoBERTa, a tie.
+* The fuzzy layer's value is interpretability and edge cases rather than benchmark
+  points: the confidence level, the hate severity (offensive vs hate vs severe),
+  sarcasm correction, a "Why" for every verdict, and genuine fusion when the
+  transformers aren't available.
+* Honest caveats:
+  * The fuzzy hate rules were revised to first-order consequents after an earlier
+    test run, so the test set was seen during design.
+  * `twitter-roberta-base-hate-latest` was trained on 13 hate datasets, which may
+    include SemEval-2019 data, so its hate score may be optimistic.
+
 If `torch`/`transformers` aren't installed, the app automatically falls back to
 TF-IDF + VADER with the same fuzzy layer.
 

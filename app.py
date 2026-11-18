@@ -561,7 +561,8 @@ _section("Model performance", "How well it works.",
 bench = engine.load_benchmark()
 if bench:
     NAMES = [("old_tfidf", "Original TF-IDF model"), ("vader_only", "VADER lexicon only"),
-             ("roberta_only", "RoBERTa only"), ("fuzzy_ensemble", "Fuzzy ensemble (current)")]
+             ("roberta_only", "RoBERTa only"), ("fuzzy_untuned", "Fuzzy ensemble, hand-set rules"),
+             ("fuzzy_ensemble", "Fuzzy ensemble, learned rules (current)")]
 
     def _bench_table(res: dict, cols: list) -> str:
         head = "".join(f"<th>{c[1]}</th>" for c in cols)

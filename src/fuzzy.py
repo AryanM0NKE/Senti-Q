@@ -115,10 +115,13 @@ class SentimentResult:
     notes: list
 
 
-def fuse_sentiment(p_t: np.ndarray | None, p_l: np.ndarray | None, cues: Cues) -> SentimentResult:
+def fuse_sentiment(p_t: np.ndarray | None, p_l: np.ndarray | None, cues: Cues,
+                   support_scale: float = 1.0) -> SentimentResult:
     """
     p_t : transformer probabilities [neg, neu, pos] (None if unavailable)
     p_l : TF-IDF probabilities      [neg, neu, pos] (None if unavailable)
+    support_scale : how much the support experts (VADER, TF-IDF) count relative to
+        the rule consequents; learned on the validation split by src/evaluate.py.
     """
     p_v = vader_to_probs(cues.vader_compound)
     conf_t = conf_sets(float(p_t.max())) if p_t is not None else {"low": 1, "medium": 0, "high": 0}
@@ -137,7 +140,9 @@ def fuse_sentiment(p_t: np.ndarray | None, p_l: np.ndarray | None, cues: Cues) -
 
     experts = {"transformer": p_t, "vader": p_v, "tfidf": p_l}
     avail = np.array([experts[k] is not None for k in experts], dtype=float)
-    w = w * avail
+    w = w * np.array([1.0, support_scale, support_scale]) * avail
+    if w.sum() == 0:                       # transformer missing and support scaled to 0
+        w = avail.copy()
     w = w / w.sum()
     fused = sum(wi * (p if p is not None else 0) for wi, p in zip(w, experts.values()))
     notes = rb.top(2)
@@ -185,10 +190,13 @@ class HateResult:
 HATE_THRESHOLD = 0.5   # tuned on the TweetEval validation split by src/evaluate.py
 
 
-def fuse_hate(p_t: float | None, p_l: float | None, cues: Cues, threshold: float = HATE_THRESHOLD) -> HateResult:
+def fuse_hate(p_t: float | None, p_l: float | None, cues: Cues, threshold: float = HATE_THRESHOLD,
+              support_scale: float = 1.0, cue_scale: float = 1.0) -> HateResult:
     """
     p_t : transformer P(hate) (None if unavailable)
     p_l : TF-IDF P(hate)      (None if unavailable)
+    support_scale, cue_scale : strength multipliers for the TF-IDF-agreement rule and
+        the lexical-cue rules; learned on the validation split by src/evaluate.py.
     """
     primary = p_t if p_t is not None else (p_l if p_l is not None else 0.0)
     pt = prob_sets(primary)
@@ -196,16 +204,18 @@ def fuse_hate(p_t: float | None, p_l: float | None, cues: Cues, threshold: float
     hostile = max(cues.dehuman, cues.exclusion, cues.threat)
 
     rb = RuleBase()
-    # First-order outputs for the model rules keep the score proportional to the evidence.
-    rb.rule(pt["high"],                               max(0.85, primary), "Model detects hateful language with high probability")
-    rb.rule(pt["medium"],                             0.55, "Model gives a moderate hate probability")
+    # First-order consequents: the model-confidence rules output the model's own
+    # probability, so with no other evidence the fuzzy score equals P(hate). The
+    # cue / agreement rules below can then only move a score when they fire.
+    rb.rule(pt["high"],                               primary, "Model detects hateful language with high probability")
+    rb.rule(pt["medium"],                             primary, "Model gives a moderate hate probability")
     rb.rule(pt["low"],                                primary, "Model finds little hateful language")
-    rb.rule(min(pt["medium"], pl["high"]),            0.75, "Second model agrees the language is hateful")
-    rb.rule(min(cues.group, hostile),                 0.90, "Identity group targeted with dehumanising, exclusionary or threatening language")
-    rb.rule(min(cues.threat, float(cues.second_person), 1 - pt["low"]),
-                                                      0.75, "Threat directed at a person")
-    rb.rule(min(cues.profanity, 1 - cues.group, 1 - pt["high"]),
-                                                      0.30, "Profanity without a targeted group: offensive, not hate")
+    rb.rule(support_scale * min(pt["medium"], pl["high"]), 0.75, "Second model agrees the language is hateful")
+    rb.rule(cue_scale * min(cues.group, hostile),          0.90, "Identity group targeted with dehumanising, exclusionary or threatening language")
+    rb.rule(cue_scale * min(cues.threat, float(cues.second_person), 1 - pt["low"]),
+                                                           0.75, "Threat directed at a person")
+    rb.rule(cue_scale * min(cues.profanity, 1 - cues.group, 1 - pt["high"]),
+                                                           0.30, "Profanity without a targeted group: offensive, not hate")
     score = float(rb.defuzzify(np.array([primary]))[0])
 
     is_hate = score >= threshold

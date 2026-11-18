@@ -25,12 +25,17 @@ from src import fuzzy, hate_speech, lexicon, predict, transformer_models
 BENCHMARK_PATH = Path(__file__).parent.parent / "models" / "benchmark.json"
 
 
-def _threshold() -> float:
-    """Hate threshold tuned on the validation split (falls back to the default)."""
+DEFAULT_TUNED = {"sentiment_support_scale": 1.0, "hate_support_scale": 1.0,
+                 "hate_cue_scale": 1.0, "hate_threshold": fuzzy.HATE_THRESHOLD}
+
+
+def _tuned() -> dict:
+    """Fuzzy parameters learned on the validation split by src/evaluate.py (else defaults)."""
     try:
-        return float(json.loads(BENCHMARK_PATH.read_text(encoding="utf-8"))["tuned_hate_threshold"])
+        learned = json.loads(BENCHMARK_PATH.read_text(encoding="utf-8")).get("tuned", {})
+        return {**DEFAULT_TUNED, **{k: float(v) for k, v in learned.items() if k in DEFAULT_TUNED}}
     except Exception:
-        return fuzzy.HATE_THRESHOLD
+        return dict(DEFAULT_TUNED)
 
 
 def status() -> dict:
@@ -61,13 +66,17 @@ def analyze(texts: list[str], *, use_transformer: bool = True) -> pd.DataFrame:
               if st["tfidf_sentiment"] else None)
     l_hate = hate_speech.predict_batch(texts)["prob_hate"].to_numpy() if st["tfidf_hate"] else None
     hate_on = use_t or st["tfidf_hate"]
-    thr = _threshold()
+    tp = _tuned()
+    # Learned scales only apply when the transformer is present; without it the
+    # support experts *are* the model, so use the defaults.
+    s_scale = tp["sentiment_support_scale"] if use_t else 1.0
+    h_sup = tp["hate_support_scale"] if use_t else 1.0
 
     rows = []
     for i, text in enumerate(texts):
         cues = lexicon.extract(text)
         s = fuzzy.fuse_sentiment(t_sent[i] if t_sent is not None else None,
-                                 l_sent[i] if l_sent is not None else None, cues)
+                                 l_sent[i] if l_sent is not None else None, cues, s_scale)
         row = {
             "predicted_sentiment": s.label,
             "prob_negative": round(float(s.probs[0]), 4),
@@ -78,7 +87,9 @@ def analyze(texts: list[str], *, use_transformer: bool = True) -> pd.DataFrame:
         }
         if hate_on:
             h = fuzzy.fuse_hate(float(t_hate[i]) if t_hate is not None else None,
-                                float(l_hate[i]) if l_hate is not None else None, cues, thr)
+                                float(l_hate[i]) if l_hate is not None else None, cues,
+                                threshold=tp["hate_threshold"] if use_t else fuzzy.HATE_THRESHOLD,
+                                support_scale=h_sup, cue_scale=tp["hate_cue_scale"])
             row.update({
                 "hate_label": "Hate" if h.is_hate else "Not hate",
                 "prob_hate": h.score,
