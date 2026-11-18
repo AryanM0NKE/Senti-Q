@@ -1,5 +1,5 @@
 """
-src/fuzzy.py — Fuzzy inference system that fuses SentimentIQ's experts.
+src/fuzzy.py — Fuzzy inference system that fuses Senti-Q's experts.
 
 Why fuzzy logic?
     Each expert (RoBERTa transformer, VADER lexicon, TF-IDF model) is good in
@@ -84,22 +84,28 @@ def vader_to_probs(compound: float) -> np.ndarray:
 
 @dataclass
 class RuleBase:
-    fired: list = field(default_factory=list)     # (strength, output, description)
+    fired: list = field(default_factory=list)     # (strength, output, description, group)
 
-    def rule(self, strength: float, output, description: str):
+    def rule(self, strength: float, output, description: str, group: str | None = None):
         if strength > 0:
-            self.fired.append((float(strength), output, description))
+            self.fired.append((float(strength), output, description, group or description))
 
     def defuzzify(self, default):
         if not self.fired:
             return default
-        w = np.array([s for s, _, _ in self.fired])
-        outs = np.array([np.asarray(o, dtype=float) for _, o, _ in self.fired])
+        w = np.array([r[0] for r in self.fired])
+        outs = np.array([np.asarray(r[1], dtype=float) for r in self.fired])
         return (w[:, None] * outs.reshape(len(w), -1)).sum(0) / w.sum()
 
     def top(self, k: int = 3, min_strength: float = 0.25) -> list[str]:
-        ranked = sorted(self.fired, key=lambda r: -r[0])
-        return [d for s, _, d in ranked if s >= min_strength][:k]
+        """Strongest fired rules for explanations, at most one per group (overlapping
+        fuzzy sets like 'medium' and 'high' confidence can fire together)."""
+        seen, out = set(), []
+        for s, _, d, g in sorted(self.fired, key=lambda r: -r[0]):
+            if s >= min_strength and g not in seen:
+                seen.add(g)
+                out.append(d)
+        return out[:k]
 
 
 # ---------------------------------------------------------------------------
@@ -130,12 +136,12 @@ def fuse_sentiment(p_t: np.ndarray | None, p_l: np.ndarray | None, cues: Cues,
 
     # --- Rule base 1: how much to trust each expert -> weights (T, V, L) ---
     rb = RuleBase()
-    rb.rule(conf_t["high"],                          (0.85, 0.10, 0.05), "Transformer is highly confident, so it dominates")
-    rb.rule(conf_t["medium"],                        (0.65, 0.20, 0.15), "Transformer is moderately confident")
-    rb.rule(min(conf_t["low"], inten["strong"]),     (0.40, 0.45, 0.15), "Transformer unsure but strong lexical emotion, so VADER weighted up")
-    rb.rule(min(conf_t["low"], 1 - inten["strong"]), (0.55, 0.20, 0.25), "All signals weak, so experts are blended")
-    rb.rule(min(length["short"], inten["strong"]),   (0.45, 0.45, 0.10), "Short emotive post, where lexicon cues are reliable")
-    rb.rule(length["long"],                          (0.75, 0.15, 0.10), "Long post, where context matters most")
+    rb.rule(conf_t["high"],                          (0.85, 0.10, 0.05), "Transformer is highly confident, so it dominates", "t")
+    rb.rule(conf_t["medium"],                        (0.65, 0.20, 0.15), "Transformer is moderately confident, so it leads", "t")
+    rb.rule(min(conf_t["low"], inten["strong"]),     (0.40, 0.45, 0.15), "Transformer unsure but strong lexical emotion, so VADER weighted up", "t")
+    rb.rule(min(conf_t["low"], 1 - inten["strong"]), (0.55, 0.20, 0.25), "All signals weak, so experts are blended", "t")
+    rb.rule(min(length["short"], inten["strong"]),   (0.45, 0.45, 0.10), "Short emotive post, where lexicon cues are reliable", "len")
+    rb.rule(length["long"],                          (0.75, 0.15, 0.10), "Long post, where context matters most", "len")
     w = rb.defuzzify(np.array([0.6, 0.25, 0.15]))
 
     experts = {"transformer": p_t, "vader": p_v, "tfidf": p_l}
@@ -207,9 +213,9 @@ def fuse_hate(p_t: float | None, p_l: float | None, cues: Cues, threshold: float
     # First-order consequents: the model-confidence rules output the model's own
     # probability, so with no other evidence the fuzzy score equals P(hate). The
     # cue / agreement rules below can then only move a score when they fire.
-    rb.rule(pt["high"],                               primary, "Model detects hateful language with high probability")
-    rb.rule(pt["medium"],                             primary, "Model gives a moderate hate probability")
-    rb.rule(pt["low"],                                primary, "Model finds little hateful language")
+    rb.rule(pt["high"],                               primary, "Model detects hateful language with high probability", "m")
+    rb.rule(pt["medium"],                             primary, "Model gives a moderate hate probability", "m")
+    rb.rule(pt["low"],                                primary, "Model finds little hateful language", "m")
     rb.rule(support_scale * min(pt["medium"], pl["high"]), 0.75, "Second model agrees the language is hateful")
     rb.rule(cue_scale * min(cues.group, hostile),          0.90, "Identity group targeted with dehumanising, exclusionary or threatening language")
     rb.rule(cue_scale * min(cues.threat, float(cues.second_person), 1 - pt["low"]),

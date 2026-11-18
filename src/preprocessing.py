@@ -1,5 +1,5 @@
 """
-src/preprocessing.py — Text cleaning and normalisation for SentimentIQ.
+src/preprocessing.py — Text cleaning and normalisation for Senti-Q.
 
 Cleans raw tweet / post text for TF-IDF feature extraction while preserving
 meaningful sentiment signals (capitalisation, punctuation counts, etc.).

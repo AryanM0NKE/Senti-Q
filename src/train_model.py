@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-src/train_model.py — Model training pipeline for SentimentIQ.
+src/train_model.py — Model training pipeline for Senti-Q.
 
 Loads the TweetEval sentiment dataset (or a user-supplied CSV), trains a
 TF-IDF + Logistic Regression pipeline, evaluates it on a held-out test
@@ -307,7 +307,7 @@ def train(df: pd.DataFrame) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Train the SentimentIQ TF-IDF + LogReg classifier."
+        description="Train the Senti-Q TF-IDF + LogReg classifier."
     )
     parser.add_argument(
         "--csv",

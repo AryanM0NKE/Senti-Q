@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-src/hate_speech.py — Hate-speech detection for SentimentIQ.
+src/hate_speech.py — Hate-speech detection for Senti-Q.
 
 Binary classifier (Not hate / Hate) trained on the TweetEval *hate* task
 (SemEval-2019 Task 5: hate speech against immigrants and women), using the same

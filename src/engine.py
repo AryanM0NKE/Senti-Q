@@ -1,5 +1,5 @@
 """
-src/engine.py — SentimentIQ analysis engine.
+src/engine.py — Senti-Q analysis engine.
 
     texts ─┬─► RoBERTa sentiment ─┐
            ├─► VADER lexicon ─────┼─► fuzzy fusion ─► sentiment + confidence + reasons
@@ -38,6 +38,11 @@ def _tuned() -> dict:
         return dict(DEFAULT_TUNED)
 
 
+def hate_threshold() -> float:
+    """The hate-flag threshold the engine is currently using."""
+    return _tuned()["hate_threshold"] if transformer_models.available() else fuzzy.HATE_THRESHOLD
+
+
 def status() -> dict:
     t = transformer_models.available()
     return {
@@ -48,6 +53,8 @@ def status() -> dict:
         "ready": t or predict.model_is_trained(),
         "hate_ready": t or hate_speech.model_is_trained(),
         "name": ("Fuzzy ensemble: RoBERTa + VADER + TF-IDF" if t else "TF-IDF + VADER (fuzzy)"),
+        "finetuned_sentiment": t and transformer_models.is_finetuned("sentiment"),
+        "finetuned_hate": t and transformer_models.is_finetuned("hate"),
     }
 
 
@@ -84,6 +91,7 @@ def analyze(texts: list[str], *, use_transformer: bool = True) -> pd.DataFrame:
             "prob_positive": round(float(s.probs[2]), 4),
             "sentiment_confidence": s.confidence,
             "sentiment_notes": s.notes,
+            "expert_weights": s.weights,
         }
         if hate_on:
             h = fuzzy.fuse_hate(float(t_hate[i]) if t_hate is not None else None,

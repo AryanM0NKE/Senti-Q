@@ -1,0 +1,48 @@
+{
+  "task": "hate",
+  "base_model": "cardiffnlp/twitter-roberta-base-hate-latest",
+  "device": "NVIDIA GeForce RTX 3050 Laptop GPU",
+  "training_data": [
+    "tweet_eval/hate train (9,000)"
+  ],
+  "n_train": 9000,
+  "hyperparameters": {
+    "epochs": 2.0,
+    "lr": 1e-05,
+    "batch": 16,
+    "max_len": 128,
+    "eval_steps": 140,
+    "early_stopping_patience": 3,
+    "fp16": true
+  },
+  "selection_metric": "macro_f1",
+  "best_checkpoint": "D:\\DSA (2026)\\SentimentIQ\\models\\finetuned\\_runs_hate\\checkpoint-140",
+  "train_minutes": 2.0,
+  "before": {
+    "val": {
+      "accuracy": 0.859,
+      "macro_f1": 0.8564,
+      "macro_recall": 0.8576
+    },
+    "test": {
+      "accuracy": 0.867,
+      "macro_f1": 0.8666,
+      "macro_recall": 0.8795
+    }
+  },
+  "after": {
+    "val": {
+      "accuracy": 0.867,
+      "macro_f1": 0.8657,
+      "macro_recall": 0.8714
+    },
+    "test": {
+      "accuracy": 0.7438,
+      "macro_f1": 0.742,
+      "macro_recall": 0.776
+    }
+  },
+  "shipped": false,
+  "verdict": "NOT SHIPPED (regressed on the test split); the app keeps the original model.",
+  "date": "2026-11-18 23:02"
+}

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Senti-Q for X: settings</title>
+  <style>
+    body { font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: #0a0a0a; margin: 32px; max-width: 520px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    p { color: #525252; margin: 0 0 20px; }
+    label { display: block; font-weight: 600; margin-bottom: 6px; }
+    input { width: 100%; box-sizing: border-box; padding: 10px 14px; border: 1px solid #d4d4d4; border-radius: 10px; font: inherit; }
+    button { margin-top: 14px; padding: 9px 20px; border: 0; border-radius: 999px; background: #0a0a0a; color: #fff; font: inherit; cursor: pointer; }
+    #saved { margin-left: 10px; color: #525252; }
+  </style>
+</head>
+<body>
+  <h1>Senti-Q for X</h1>
+  <p>Where your Senti-Q app runs. Keep the default unless you host it somewhere else.</p>
+  <label for="appUrl">Senti-Q address</label>
+  <input id="appUrl" type="url" placeholder="http://localhost:8501">
+  <button id="save">Save</button><span id="saved"></span>
+  <script src="options.js"></script>
+</body>
+</html>

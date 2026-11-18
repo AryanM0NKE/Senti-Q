@@ -1,0 +1,48 @@
+{
+  "task": "sentiment",
+  "base_model": "cardiffnlp/twitter-roberta-base-sentiment-latest",
+  "device": "NVIDIA GeForce RTX 3050 Laptop GPU",
+  "training_data": [
+    "tweet_eval/sentiment train (45,615)"
+  ],
+  "n_train": 45615,
+  "hyperparameters": {
+    "epochs": 1.0,
+    "lr": 5e-06,
+    "batch": 16,
+    "max_len": 128,
+    "eval_steps": 712,
+    "early_stopping_patience": 3,
+    "fp16": true
+  },
+  "selection_metric": "macro_recall",
+  "best_checkpoint": "D:\\DSA (2026)\\SentimentIQ\\models\\finetuned\\_runs_sentiment\\checkpoint-2136",
+  "train_minutes": 7.3,
+  "before": {
+    "val": {
+      "accuracy": 0.7705,
+      "macro_f1": 0.7596,
+      "macro_recall": 0.7755
+    },
+    "test": {
+      "accuracy": 0.7217,
+      "macro_f1": 0.724,
+      "macro_recall": 0.7351
+    }
+  },
+  "after": {
+    "val": {
+      "accuracy": 0.776,
+      "macro_f1": 0.7643,
+      "macro_recall": 0.781
+    },
+    "test": {
+      "accuracy": 0.7135,
+      "macro_f1": 0.7163,
+      "macro_recall": 0.7372
+    }
+  },
+  "shipped": true,
+  "verdict": "SHIPPED: macro_recall improved on validation and did not regress on test. Saved to D:\\DSA (2026)\\SentimentIQ\\models\\finetuned\\sentiment",
+  "date": "2026-11-18 23:10"
+}

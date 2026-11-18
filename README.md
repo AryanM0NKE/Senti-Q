@@ -1,533 +1,189 @@
-# SentimentIQ — Sentiment & Hate-Speech Intelligence Platform
+# Senti-Q
 
-> Paste any X (Twitter) post link, a block of text, or run a live search, and
-> SentimentIQ reports each post's **sentiment** (Positive / Neutral / Negative)
-> and whether it contains **hate speech**. Two TF-IDF + Logistic Regression
-> classifiers trained on the TweetEval benchmark power it, behind a
-> black-and-white Streamlit dashboard.
+**Sentiment and hate-speech analysis for posts on X (Twitter).** Paste a link to any
+public post, or send one straight from X with the browser extension. Senti-Q shows
+the post beside an analysis of how it reads (positive / neutral / negative) and
+whether it contains hate speech, with a plain-English "why" for every verdict.
 
-## Quick start
+Final-year college project.
 
-This is a **Streamlit** app: Python generates the web page, so there is no HTML
-file to open. Windows users can simply **double-click `run.bat`**. Or by hand:
+---
+
+## Run it
+
+This is a [Streamlit](https://streamlit.io) app: Python serves the web page, so there
+is no HTML file to open.
+
+**Windows:** double-click **`run.bat`**. The first run creates a virtual environment,
+installs everything and trains the small models (5–10 minutes). Your browser then opens
+at **http://localhost:8501**. Keep the `run.bat` window open while you use the app.
+
+**Manually (any OS):**
 
 ```bash
-python -m venv venv && venv\Scripts\activate   # (Mac/Linux: source venv/bin/activate)
+python -m venv venv
+venv\Scripts\activate              # macOS/Linux: source venv/bin/activate
 pip install -r requirements.txt
-python -m src.train_model     # lightweight sentiment model  (~1-3 min)
-python -m src.hate_speech     # lightweight hate-speech model (~1 min)
-streamlit run app.py          # opens http://localhost:8501
-```
-The first analysis downloads the two RoBERTa models (~1 GB, cached afterwards).
-
-**Input modes** (sidebar → Input):
-
-| Mode | Needs X token? | What it does |
-|---|---|---|
-| Post link or ID | No (optional) | Paste `https://x.com/user/status/123…` (or several). Uses the X API if a token is set, otherwise X's public embed endpoint. |
-| Paste text | No | Score any text; one post per line. |
-| Search X (live) | Yes | Keyword search of recent posts via X API v2. |
-| Demo mode | No | 15 built-in sample posts. |
-
-> Note: X's API access tiers change frequently and reading posts may require a paid
-> plan. Post-link mode therefore falls back to the public embed endpoint
-> automatically (text and date only, no like/repost counts).
-
-## How the engine works (fuzzy ensemble)
-
-```
-post ─┬─► RoBERTa sentiment (cardiffnlp/twitter-roberta-base-sentiment-latest) ─┐
-      ├─► VADER lexicon (emoji, CAPS, "!!!", intensifiers) ─────────────────────┼─► fuzzy fusion ─► sentiment + confidence + "why"
-      ├─► TF-IDF + Logistic Regression ─────────────────────────────────────────┘
-      ├─► RoBERTa hate (cardiffnlp/twitter-roberta-base-hate-latest) ───────────┐
-      ├─► TF-IDF hate model ────────────────────────────────────────────────────┼─► fuzzy fusion ─► hate score + severity + "why"
-      └─► linguistic cues (group mentions, dehumanising words, threats, ...) ───┘
+python -m src.train_model          # small TF-IDF sentiment model (~1-3 min)
+python -m src.hate_speech          # small TF-IDF hate-speech model (~1 min)
+streamlit run app.py
 ```
 
-The **fuzzy-logic layer** (`src/fuzzy.py`) is a zero-order Takagi–Sugeno inference system:
+The first analysis downloads the two RoBERTa language models (~1 GB, cached afterwards).
 
-1. **Fuzzification**: crisp inputs become degrees of membership in linguistic sets,
-   e.g. transformer confidence is *low / medium / high*, post length is
-   *short / medium / long*, and VADER intensity is *weak / moderate / strong*.
-2. **Rule evaluation** (AND = min, OR = max, NOT = 1 − x), for example:
-   * IF transformer confidence is HIGH THEN trust the transformer most
-   * IF transformer is unsure AND lexical emotion is STRONG THEN raise VADER's weight
-   * IF a sarcasm marker is present AND the post sounds positive THEN shift toward negative
-   * IF an identity group is mentioned AND dehumanising / exclusion / threat language is present THEN hate is HIGH
-   * IF there's profanity but no targeted group THEN *offensive, not hate*
-3. **Defuzzification**: firing-strength-weighted average of the rule outputs.
+## Use it
 
-Every post card shows the strongest rules that fired ("Why"). Each post also gets a
-confidence level (High / Medium / Low) and a hate severity (None / Offensive / Hate / Severe).
+* **Paste a link** like `https://x.com/username/status/1234567890` and press **Analyse**.
+  Paste several links separated by spaces to compare posts.
+* **Straight from X:** install the *Senti-Q for X* extension
+  (see [`browser-extension/README.md`](browser-extension/README.md)). While you browse X,
+  signed in to your own account in your own browser, click its icon to analyse the post
+  in the middle of your screen, or right-click a post → **Analyse with Senti-Q**.
+  A no-install bookmarklet is in the app under **Use it on X**.
+* Every result is also a shareable link: `http://localhost:8501/?post=<post link>`.
 
-**Benchmark**: `python -m src.evaluate` scores the original TF-IDF model, each
-expert alone and the fuzzy ensemble on TweetEval's official test splits. The
-baselines are trained on the train split only, and the hate threshold is tuned on
-the validation split only. Results are saved to `models/benchmark.json` and shown in the app.
+**How posts are opened:** Senti-Q never searches or queries X and needs no API key. It
+opens only the post links you give it, through X's public embed (oEmbed) endpoint, the
+same way any website embeds a post. Private, deleted or age-restricted posts can't be
+opened.
 
-### Results (TweetEval official test sets)
+---
+
+## How it works
+
+```
+post text ─┬─► RoBERTa sentiment  (cardiffnlp/twitter-roberta-base-sentiment-latest) ─┐
+           ├─► VADER lexicon      (emoji, CAPS, "!!!", intensifiers) ─────────────────┼─► fuzzy fusion ─► sentiment + confidence
+           ├─► TF-IDF + Logistic Regression ─────────────────────────────────────────┘
+           ├─► RoBERTa hate       (cardiffnlp/twitter-roberta-base-hate-latest) ──────┐
+           ├─► TF-IDF hate model ─────────────────────────────────────────────────────┼─► fuzzy fusion ─► hate score + severity
+           └─► linguistic cues    (identity groups, dehumanising words, threats, …) ──┘          + "why" for both
+```
+
+**Fuzzy-logic layer** (`src/fuzzy.py`): a zero-order Takagi–Sugeno inference system.
+
+1. **Fuzzify** inputs into graded sets, e.g. transformer confidence *low / medium / high*,
+   post length *short / medium / long*, VADER intensity *weak / moderate / strong*.
+2. **Fire rules** (AND = min, OR = max, NOT = 1 − x), for example:
+   * IF the transformer is highly confident THEN trust it most
+   * IF the transformer is unsure AND lexical emotion is strong THEN raise VADER's weight
+   * IF a sarcasm marker appears AND the post sounds positive THEN shift toward negative
+   * IF an identity group is mentioned AND dehumanising / exclusion / threat language is present THEN hate is high
+   * IF there is profanity but no targeted group THEN *offensive, not hate*
+3. **Defuzzify** with the firing-strength-weighted average. The strongest rules become
+   the "Why" list in the app.
+
+The rule strengths are learned on the validation split (`python -m src.evaluate`).
+
+## Results
+
+Scored on TweetEval's official, untouched test sets
+(`python -m src.evaluate` → `models/benchmark.json`):
 
 | Engine | Sentiment accuracy (12,284 tweets) | Hate-speech accuracy (2,970 tweets) |
 |---|---|---|
 | Original TF-IDF + Logistic Regression | 59.5% | 48.3% |
 | VADER lexicon only | 54.8% | n/a |
 | RoBERTa only | 72.2% | 86.7% |
-| Fuzzy ensemble, hand-set rules | 71.8% | 86.5% |
-| **Fuzzy ensemble, learned rules (shipped)** | **71.9%** | **86.7%** |
+| **Fuzzy ensemble (Senti-Q)** | **71.9%** | **86.7%** |
 
-**What this shows:**
-* The accuracy gain comes from the transformers: +12.4 points on sentiment and
-  +38.4 on hate.
-* On this benchmark the fuzzy layer is accuracy-neutral. For hate, validation
-  learned to switch the cue rules' influence on the score off, so the score
-  equals RoBERTa's. For sentiment it's within 0.2 points of RoBERTa, a tie.
-* The fuzzy layer's value is interpretability and edge cases rather than benchmark
-  points: the confidence level, the hate severity (offensive vs hate vs severe),
-  sarcasm correction, a "Why" for every verdict, and genuine fusion when the
-  transformers aren't available.
-* Honest caveats:
-  * The fuzzy hate rules were revised to first-order consequents after an earlier
-    test run, so the test set was seen during design.
-  * `twitter-roberta-base-hate-latest` was trained on 13 hate datasets, which may
-    include SemEval-2019 data, so its hate score may be optimistic.
+* **Where the accuracy comes from:** the transformers. That's +12.4 points on sentiment
+  and +38.4 on hate over the original model.
+* **What the fuzzy layer does to accuracy:** nothing measurable on this benchmark. Its
+  value is the confidence level, the severity grading (offensive vs hate vs severe),
+  sarcasm handling and the explanations.
 
-If `torch`/`transformers` aren't installed, the app automatically falls back to
-TF-IDF + VADER with the same fuzzy layer.
+### Fine-tuning experiments
 
-## Hate-speech model
+`python -m src.finetune --task sentiment|hate` fine-tunes the RoBERTa models on a GPU
+(an RTX 3050 4 GB laptop GPU took 3–18 minutes per run). The rules were fixed **before**
+running:
 
-Binary classifier (Hate / Not hate) trained on the TweetEval `hate` task
-(SemEval-2019 Task 5). Class weights are balanced, and a post is flagged when the
-predicted probability is at least 0.5. **It was trained only on tweets targeting immigrants and women**,
-so it is weaker on other targets, sarcasm and coded language. Treat a flag as an
-estimate, never as a finding about a person. Swapping in a transformer
-(e.g. `cardiffnlp/twitter-roberta-base-hate`) is the natural upgrade.
+* pick the checkpoint by validation score (with early stopping)
+* ship a fine-tuned model only if it beats the original on validation **and** doesn't
+  regress on the official test set
 
----
+| Run | Validation | Test | Shipped? |
+|---|---|---|---|
+| Sentiment: TweetEval + 26.7k Tweet Sentiment Extraction tweets, lr 1e-5, 2 epochs | macro recall 77.6 → 76.1 | acc 72.2 → 71.3 | No |
+| Sentiment: TweetEval only, lr 5e-6, 1 epoch | macro recall 77.6 → 78.1 | macro recall 73.5 → 73.7, acc 72.2 → 71.4 | Yes, on the machine that trained it |
+| Hate: HatEval train, lr 1e-5, 2 epochs | macro F1 85.6 → 86.6 | acc **86.7 → 74.4** | No |
 
-## 📋 Table of Contents
+What the experiments show:
 
-1. [Project Objective](#1-project-objective)
-2. [Architecture & Data Flow](#2-architecture--data-flow)
-3. [Technologies Used & Why](#3-technologies-used--why)
-4. [Dataset Source & Label Mapping](#4-dataset-source--label-mapping)
-5. [Installation](#5-installation)
-6. [Configuring X_BEARER_TOKEN](#6-configuring-x_bearer_token)
-7. [Training the Model](#7-training-the-model)
-8. [Running the Application](#8-running-the-application)
-9. [Live Mode vs Demo Mode](#9-live-mode-vs-demo-mode)
-10. [Model Evaluation Methodology](#10-model-evaluation-methodology)
-11. [Limitations & Responsible Use](#11-limitations--responsible-use)
-12. [Future Improvements](#12-future-improvements)
-13. [🎓 Viva Q&A Guide](#13--viva-qa-guide)
+* The CardiffNLP models were already fine-tuned on this exact data, so further
+  fine-tuning is close to a tie. Mixing in a dataset with a different labelling style
+  made things worse.
+* The hate run improved on validation but collapsed on test. HatEval's test set is
+  deliberately drawn from a different distribution, which is exactly why the
+  test-regression gate exists.
+
+Reports are in `models/finetuned/*_report.json`. Fine-tuned weights (~480 MB) are too
+large for GitHub, so they stay on the machine that trained them. Everyone else
+automatically uses the original Hugging Face models.
 
 ---
 
-## 1. Project Objective
-
-SentimentIQ analyses the **political sentiment** of English-language posts
-fetched from the X (Twitter) platform.  It answers the question:
-*"What does social-media text reveal about public sentiment toward political
-topics at a given moment?"*
-
-The system:
-- Collects posts in real time via the **official X API v2**.
-- Cleans and normalises the text with a bespoke preprocessing pipeline.
-- Predicts sentiment (**Positive / Neutral / Negative**) using a
-  **TF-IDF vectorizer + Logistic Regression** classifier.
-- The classifier is trained on the **TweetEval** benchmark dataset — a
-  real, publicly available, human-labeled corpus of social-media text.
-- Presents results through a premium interactive Streamlit dashboard.
-
----
-
-## 2. Architecture & Data Flow
+## Project structure
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                        OFFLINE TRAINING                          │
-│                                                                  │
-│  TweetEval Dataset ──► Preprocessing ──► TF-IDF Fit             │
-│  (labeled CSV)          clean_text()      TfidfVectorizer        │
-│                              │                  │                │
-│                              ▼                  ▼                │
-│                        Train / Test   LogisticRegression.fit()   │
-│                           Split       (training split only)      │
-│                              │                  │                │
-│                              ▼                  ▼                │
-│                        Evaluate on    models/tfidf_vectorizer    │
-│                        held-out set   models/lr_classifier       │
-│                         metrics       models/model_metadata.json │
-└──────────────────────────────────────────────────────────────────┘
-                                │
-                     (saved artefacts loaded once)
-                                │
-┌──────────────────────────────────────────────────────────────────┐
-│                       STREAMLIT APP                              │
-│                                                                  │
-│  Sidebar Controls                                                │
-│       │                                                          │
-│       ├─► Live Mode: X API v2 ──► FetchResult ──► XPost list    │
-│       │   (x_api.py)              recent search                 │
-│       │                                                          │
-│       └─► Demo Mode: DEMO_POSTS (data/demo_posts.py)            │
-│                         │                                        │
-│                         ▼                                        │
-│                  posts_to_df()          DataFrame                │
-│                         │               text col                 │
-│                         ▼                                        │
-│              predict.predict_batch()  ──► cleaned_text           │
-│                (vectorizer.transform +   predicted_sentiment     │
-│                 clf.predict_proba)       prob_{pos,neu,neg}      │
-│                         │                                        │
-│                         ▼                                        │
-│              Dashboard Rendering:                                │
-│              • Metric cards                                      │
-│              • Donut + bar + trend charts                        │
-│              • Post explorer with probability bars               │
-│              • Model performance panel                           │
-│              • CSV export                                        │
-└──────────────────────────────────────────────────────────────────┘
+app.py                     Senti-Q web app (Streamlit)
+run.bat                    One-click Windows launcher
+assets/                    style.css (design system), favicon
+browser-extension/         "Senti-Q for X" Chrome/Edge extension
+src/
+  x_links.py               Open X posts from their links (oEmbed)
+  engine.py                analyze(): runs every model and the fuzzy fusion
+  fuzzy.py                 Fuzzy inference system
+  lexicon.py               VADER + linguistic cue extraction
+  transformer_models.py    RoBERTa models (uses a fine-tuned one if shipped)
+  predict.py, train_model.py   TF-IDF sentiment model
+  hate_speech.py           TF-IDF hate-speech model
+  finetune.py              GPU fine-tuning with the ship/no-ship protocol
+  evaluate.py              Benchmark + learning the fuzzy rule strengths
+  preprocessing.py         Text cleaning
+models/                    Trained artefacts, benchmark and fine-tuning reports
+tests/                     pytest suite (pytest tests -q)
 ```
 
----
+## Limitations
 
-## 3. Technologies Used & Why
+* Results are model estimates, not verdicts. Subtle irony, new slang and coded language
+  can still fool them. Never use a flag to judge or report an individual.
+* The hate-speech training data focuses on English posts about immigrants and women.
+  Other targets and languages are weaker.
+* Only public posts can be opened. Text inside images and videos isn't analysed.
 
-| Library / Tool | Purpose | Why chosen |
-|---|---|---|
-| **Python 3.10+** | Core language | Standard for ML/data work |
-| **Streamlit** | Interactive web dashboard | Pure Python, no JS needed, ideal for college demos |
-| **Scikit-learn** | TF-IDF + Logistic Regression | Industry standard, well-documented, reproducible |
-| **Pandas / NumPy** | Data manipulation | Universal in data science |
-| **Plotly** | Interactive charts | Beautiful, interactive, works in Streamlit |
-| **Joblib** | Save/load model artefacts | Scikit-learn recommended serialisation |
-| **Tweepy / requests** | X API communication | Official Python client for X API |
-| **python-dotenv** | Load `.env` credentials | Keeps secrets out of source code |
-| **datasets (HuggingFace)** | Download TweetEval | Reproducible dataset loading |
-| **pytest** | Unit testing | Standard Python test framework |
+## Troubleshooting
 
----
-
-## 4. Dataset Source & Label Mapping
-
-**Dataset**: TweetEval — Sentiment Task  
-**Source**: [Cardiff NLP / tweet_eval](https://huggingface.co/datasets/tweet_eval)  
-**Paper**: Barbieri et al., *TweetEval: Unified Benchmark and Comparative Evaluation for Tweet Classification*, EMNLP Findings 2020.
-
-The dataset contains approximately **45,000 human-labeled tweets** across
-train / validation / test splits.
-
-| Numeric Label | String Label | Description |
-|:---:|:---:|---|
-| **0** | **Negative** | Expresses negative sentiment |
-| **1** | **Neutral** | Neither positive nor negative |
-| **2** | **Positive** | Expresses positive sentiment |
-
-The labels are defined by human annotators and represent the **overall tone**
-of the tweet rather than sentiment about a specific entity.
+* **"This site can't be reached" at localhost:8501.** The server isn't running yet. Keep
+  the `run.bat` window open and wait for your browser to open by itself; the first run
+  takes several minutes.
+* **The extension does nothing.** Make sure Senti-Q is running. On a timeline, scroll a
+  post into the middle of the screen before clicking. If you host Senti-Q at a different
+  address, set it under the extension's **Options**.
+* **To demo from a phone on the same Wi-Fi,** set `address = "0.0.0.0"` in
+  `.streamlit/config.toml`.
 
 ---
 
-## 5. Installation
-
-### Prerequisites
-- Python **3.10** or higher
-- pip
-- Internet connection (for TweetEval download and X API)
-
-### Steps
-
-```bash
-# 1. Clone the repository
-git clone <your-repo-url>
-cd SentimentIQ
-
-# 2. Create a virtual environment (recommended)
-python -m venv venv
-venv\Scripts\activate         # Windows
-# source venv/bin/activate    # Mac / Linux
-
-# 3. Install dependencies
-pip install -r requirements.txt
-```
-
----
-
-## 6. Configuring X_BEARER_TOKEN
-
-> ⚠️ Never hard-code your token in source code or commit the `.env` file.
-
-1. Go to [developer.x.com](https://developer.x.com/en/portal/dashboard) and sign in.
-2. Create a new **Project** and **App** (or use an existing one).
-3. Navigate to **Keys and Tokens** → copy the **Bearer Token**.
-4. In the project root, create a file named `.env`:
-   ```
-   X_BEARER_TOKEN=your_actual_bearer_token_here
-   ```
-5. The `.env` file is listed in `.gitignore` — it will not be committed.
-
-**API access notes:** X changes its tiers and pricing often, and read access
-(search / post lookup) may require a paid plan or credits. Check the current
-limits in the X Developer Portal. If a lookup is refused, **Post link** mode
-falls back to the public embed endpoint automatically; live **search** has no
-such fallback.
-
----
-
-## 7. Training the Model
-
-Run the training script from the project root:
-
-```bash
-python -m src.train_model
-```
-
-This will:
-1. Download the TweetEval sentiment dataset (~45k labeled tweets).
-2. Clean and preprocess all text.
-3. Split into **80% train / 20% test** (stratified, seed=42).
-4. Fit the **TF-IDF vectorizer** on the training split only.
-5. Train **Logistic Regression** on the vectorised training data.
-6. Evaluate on the held-out test split.
-7. Save artefacts to `models/`.
-
-**Using a custom CSV instead:**
-```bash
-python -m src.train_model --csv data/my_labels.csv --text-col text --label-col sentiment
-```
-The CSV must have:
-- A text column (default: `text`)
-- A label column with values exactly: `Positive`, `Negative`, or `Neutral`
-
----
-
-## 8. Running the Application
-
-```bash
-streamlit run app.py
-```
-
-The dashboard opens automatically at **http://localhost:8501**.
-
----
-
-## 9. Live Mode vs Demo Mode
-
-| Feature | Live Mode | Demo Mode |
-|---|---|---|
-| Data source | Official X API v2 | 15 hand-crafted sample posts |
-| Requires API token | ✅ Yes | ❌ No |
-| Shows real posts | ✅ Yes | ❌ No — clearly labeled as demo |
-| Analysis | Real TF-IDF + LogReg predictions | Same model — same predictions |
-| Banner | None | ⚠️ Yellow DEMO MODE banner |
-| Suitable for | Live demonstration | Testing / no API access |
-
-**Demo mode is NEVER presented as live data.** A prominent yellow banner
-always distinguishes it from real API results.
-
----
-
-## 10. Model Evaluation Methodology
-
-### Preventing Data Leakage
-The TF-IDF vectorizer is **fit exclusively on the training split**.
-The test split is transformed using the already-fitted vectorizer.
-This prevents the model from gaining unfair knowledge of test-set vocabulary.
-
-### Metrics Explained
-| Metric | Formula | Why we use it |
-|---|---|---|
-| **Accuracy** | correct / total | Overall correctness |
-| **Precision (macro)** | avg per-class TP/(TP+FP) | Avoid false positives |
-| **Recall (macro)** | avg per-class TP/(TP+FN) | Avoid missing true positives |
-| **Macro F1** | harmonic mean(precision, recall) | Balanced; fair across classes |
-| **Confusion Matrix** | Actual vs predicted | Shows which classes are confused |
-
-Macro averaging gives **equal weight to each class**, making it sensitive to
-poor performance on minority classes (e.g., Neutral).
-
-### Actual Measured Results
-> ⚠️ These results are generated by running `python -m src.train_model`.
-> The exact values are written to `models/model_metadata.json` after training.
-> Check that file or the **Model Performance** panel in the dashboard for
-> the actual computed numbers.
-
----
-
-## 11. Limitations & Responsible Use
-
-- **Sampling bias**: Keyword-based search overrepresents users who tweet
-  about those specific terms — not a random sample of public opinion.
-- **Sarcasm & irony**: The model cannot reliably detect sarcasm or political
-  irony, which are common in political discourse.
-- **Context sensitivity**: The model was trained on general social-media
-  sentiment; political context, dog-whistle language, and coded speech may
-  be misclassified.
-- **No political-affiliation inference**: Post sentiment ≠ political alignment.
-- **No causal claims**: Sentiment trends do not imply causation.
-- **X Developer Policy**: Comply with X's [developer agreement](https://developer.x.com/en/developer-terms/agreement-and-policy)
-  for data storage, display, and deletion.
-- **Educational purpose**: Results should not be used for electoral analysis,
-  political targeting, or claims about population-level opinion.
-
----
-
-## 12. Future Improvements
-
-- Fine-tune a pre-trained transformer (e.g., BERTweet) for higher accuracy.
-- Add named-entity recognition to identify political figures / parties.
-- Implement a streaming pipeline using the X Filtered Stream endpoint.
-- Add topic modelling (LDA) to discover emergent political themes.
-- Extend to multilingual analysis.
-- Add a time-range selector (requires Elevated API access).
-- Deploy to Streamlit Cloud or Hugging Face Spaces.
-
----
-
-## 13. 🎓 Viva Q&A Guide
-
-### What is TF-IDF?
-
-**TF-IDF** (Term Frequency–Inverse Document Frequency) converts text into
-numerical feature vectors.
-
-- **TF (Term Frequency)**: How often a word appears in a single document.
-- **IDF (Inverse Document Frequency)**: Penalises words that appear in
-  many documents (common words like "the", "and" get low IDF).
-- The product TF × IDF gives high scores to words that are *frequent in a
-  specific document* but *rare across the corpus* — i.e., the distinctive words.
-
-### What is Logistic Regression?
-
-A **supervised classification algorithm** that models the probability of a
-categorical outcome.  For three classes (Positive / Neutral / Negative) we
-use the **multinomial** variant, which extends the binary sigmoid function
-to a softmax over all classes.  The model learns weights for each TF-IDF
-feature during training by minimising cross-entropy loss.
-
-### What is Supervised Learning?
-
-Learning from **labeled examples**.  Each training example has an input
-(tweet text) and a known output (Positive / Neutral / Negative).
-The model adjusts its parameters to minimise prediction error on these known
-examples.  Contrast with *unsupervised learning*, which finds patterns in
-unlabeled data.
-
-### What is a Train/Test Split?
-
-We hold out a portion of labeled data (20% here) that the model **never sees
-during training**.  After training, we evaluate on this held-out test set to
-measure how well the model *generalises* to new, unseen examples.
-
-### What is Stratification?
-
-Stratified splitting preserves the **class proportion** of the original
-dataset in both splits.  Without stratification, a random split might put
-all examples of a rare class into one split by chance, causing misleading
-metrics.
-
-### What is Accuracy?
-
-The fraction of all predictions that were correct.
-`accuracy = (TP + TN) / total`
-
-### What is Precision?
-
-Of all examples *predicted* as class C, what fraction *actually* belong to C.
-High precision means few false positives.
-
-### What is Recall?
-
-Of all examples that *actually* belong to class C, what fraction were
-correctly *predicted* as C.  High recall means few false negatives.
-
-### What is a Macro F1-Score?
-
-The **harmonic mean** of precision and recall, averaged equally across all
-classes regardless of class size.  It balances both metrics and is sensitive
-to poor performance on minority classes.
-
-### What is a Confusion Matrix?
-
-A square matrix where **rows = true labels** and **columns = predicted labels**.
-The diagonal contains correct predictions; off-diagonal cells show
-misclassifications.  It helps identify *which* classes are confused with each
-other (e.g., model confusing Neutral with Positive).
-
-### What is API Authentication?
-
-The X API uses **OAuth 2.0 Bearer Token** (App-Only auth).  The bearer token
-is a long string that identifies and authorises the application.
-It is passed in the HTTP `Authorization` header as `Bearer <token>`.
-We load it from an environment variable — never hard-coded — to keep it secret.
-
-### Training Data vs Live Inference Data
-
-| Aspect | Training Data | Live Inference Data |
-|---|---|---|
-| Has known labels | ✅ Yes (TweetEval labels) | ❌ No (unlabeled) |
-| Used to fit model | ✅ Yes | ❌ No |
-| Used for evaluation | Test split only | ❌ No |
-| Model sees it during training | Train split only | ❌ No |
-
-Live posts are **inference-only**: we apply the already-trained model to
-predict labels.  We do **not** retrain on live posts (no labels available).
-
----
-
-## 📁 Final Project Structure
-
-```
-SentimentIQ/
-├── app.py                        ← Main Streamlit dashboard
-├── requirements.txt              ← Pinned dependencies
-├── README.md                     ← This file
-├── .env.example                  ← Token placeholder (safe to commit)
-├── .gitignore                    ← Excludes .env, model artefacts, caches
-├── src/
-│   ├── __init__.py
-│   ├── preprocessing.py          ← Text cleaning & normalisation
-│   ├── train_model.py            ← Dataset loading, training, evaluation
-│   ├── predict.py                ← Inference with saved artefacts
-│   ├── x_api.py                  ← Official X API v2 integration
-│   └── visualizations.py        ← Plotly chart builders
-├── models/
-│   ├── .gitkeep
-│   ├── tfidf_vectorizer.joblib  ← Generated by train_model.py
-│   ├── lr_classifier.joblib     ← Generated by train_model.py
-│   └── model_metadata.json      ← Metrics & training details
-├── data/
-│   ├── .gitkeep
-│   └── demo_posts.py            ← Explicit demo data (not real X posts)
-└── tests/
-    ├── __init__.py
-    ├── test_preprocessing.py    ← 20 unit tests for preprocessing
-    └── test_prediction.py       ← 15 unit tests for inference module
-```
-
----
-
-## ⚡ Quick Command Reference
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Train the sentiment model (downloads TweetEval automatically)
-python -m src.train_model
-
-# Train the hate-speech model
-python -m src.hate_speech
-
-# Run tests
-pytest tests/ -v
-
-# Start the dashboard
-streamlit run app.py
-```
-
----
-
-*SentimentIQ — Educational College Project*  
-*TF-IDF + Logistic Regression | TweetEval Dataset | Official X API v2 | Streamlit*
+## Viva quick reference
+
+* **TF-IDF:** turns text into numbers. It weights words that are frequent in one post
+  but rare overall.
+* **Logistic Regression:** a linear classifier that outputs class probabilities
+  (softmax over three classes).
+* **Transformer / RoBERTa:** a neural network that reads the whole sentence with
+  self-attention, so it understands context and negation ("not bad"). Twitter-RoBERTa
+  was pre-trained on ~124M tweets.
+* **Fine-tuning:** continuing to train a pre-trained model on labelled task data, here
+  on a GPU with mixed precision, early stopping and checkpoint selection on validation.
+* **Fuzzy logic:** reasoning with degrees of truth (0–1) instead of true/false, via
+  membership functions, IF-THEN rules and defuzzification.
+* **Train / validation / test:** fit on train; choose settings on validation; report on
+  test, which is never used for tuning.
+* **Accuracy / precision / recall / F1:** overall correctness / how many flagged were
+  right / how many real ones were caught / their harmonic mean. *Macro* averages
+  classes equally.
+* **Data leakage:** letting test information influence training or tuning. Avoided by
+  fitting TF-IDF on train only and tuning on validation only.

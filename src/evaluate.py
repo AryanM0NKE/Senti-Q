@@ -17,6 +17,7 @@ Writes models/benchmark.json, which the dashboard displays.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -59,15 +60,22 @@ def _tfidf_probs(train: pd.DataFrame, others: list[pd.DataFrame], balanced: bool
     return [clf.predict_proba(vec.transform(d["text"].map(clean_text))) for d in others]
 
 
-def _cached(name: str, fn, texts: list[str]) -> np.ndarray:
+def _model_tag(model: str) -> str:
+    """Cache key for a model: its id, plus the weights' timestamp for local checkpoints."""
+    p = Path(model)
+    stamp = max((f.stat().st_mtime for f in p.glob("*.safetensors")), default=0) if p.exists() else 0
+    return hashlib.md5(f"{model}|{stamp}".encode()).hexdigest()[:8]
+
+
+def _cached(name: str, fn, texts: list[str], model: str) -> np.ndarray:
     CACHE.mkdir(parents=True, exist_ok=True)
-    path = CACHE / f"{name}_{len(texts)}.npy"
+    path = CACHE / f"{name}_{len(texts)}_{_model_tag(model)}.npy"
     if path.exists():
         return np.load(path)
     t0 = time.time()
-    arr = fn(texts)
+    arr = fn(texts, model)
     np.save(path, arr)
-    print(f"   {name}: {len(texts)} texts in {time.time() - t0:.0f}s")
+    print(f"   {name} [{transformer_models.describe(model)}]: {len(texts)} texts in {time.time() - t0:.0f}s")
     return arr
 
 
@@ -100,9 +108,13 @@ def sentiment(limit):
 
     p_l_val, p_l = _tfidf_probs(d["train"], [val, test], balanced=False)
     avail = transformer_models.available()
-    p_t_val = _cached("sent_val", transformer_models.sentiment_probs, val["text"].tolist()) if avail else None
-    p_t = (_cached(f"sent_test_{limit}", transformer_models.sentiment_probs, test["text"].tolist())
-           if avail else None)
+    active = transformer_models.SENTIMENT_MODEL
+    fn = transformer_models.sentiment_probs
+    p_t_val = _cached("sent_val", fn, val["text"].tolist(), active) if avail else None
+    p_t = _cached(f"sent_test_{limit}", fn, test["text"].tolist(), active) if avail else None
+    finetuned = avail and transformer_models.is_finetuned("sentiment")
+    p_orig = (_cached(f"sent_test_{limit}", fn, test["text"].tolist(), transformer_models.HUB_SENTIMENT)
+              if finetuned else None)
     cues_val = [lexicon.extract(t) for t in val["text"]]
     cues = [lexicon.extract(t) for t in test["text"]]
     p_v = np.array([fuzzy.vader_to_probs(c.vader_compound) for c in cues])
@@ -114,9 +126,11 @@ def sentiment(limit):
     print(f"   validation macro recall by support scale: "
           + ", ".join(f"{s}: {v:.4f}" for s, v in val_scores.items()) + f"  -> chose {scale}")
 
-    res = {"n_test": len(test), "support_scale": scale,
+    res = {"n_test": len(test), "support_scale": scale, "finetuned": bool(finetuned),
            "old_tfidf": _m_sent(y, p_l.argmax(1)),
            "vader_only": _m_sent(y, p_v.argmax(1))}
+    if p_orig is not None:
+        res["roberta_original"] = _m_sent(y, p_orig.argmax(1))
     if p_t is not None:
         res["roberta_only"] = _m_sent(y, p_t.argmax(1))
     res["fuzzy_untuned"] = _m_sent(y, _fuse_sent(p_t, p_l, cues, 1.0).argmax(1))
@@ -132,9 +146,13 @@ def hate(limit):
     val, test = d["validation"], _sample(d["test"], limit)
     p_l_val, p_l_test = (p[:, 1] for p in _tfidf_probs(d["train"], [val, test], balanced=True))
     avail = transformer_models.available()
-    p_t_val = _cached("hate_val", transformer_models.hate_probs, val["text"].tolist()) if avail else None
-    p_t_test = (_cached(f"hate_test_{limit}", transformer_models.hate_probs, test["text"].tolist())
-                if avail else None)
+    active = transformer_models.HATE_MODEL
+    fn = transformer_models.hate_probs
+    p_t_val = _cached("hate_val", fn, val["text"].tolist(), active) if avail else None
+    p_t_test = _cached(f"hate_test_{limit}", fn, test["text"].tolist(), active) if avail else None
+    finetuned = avail and transformer_models.is_finetuned("hate")
+    p_orig = (_cached(f"hate_test_{limit}", fn, test["text"].tolist(), transformer_models.HUB_HATE)
+              if finetuned else None)
 
     cues_val = [lexicon.extract(t) for t in val["text"]]
     cues_test = [lexicon.extract(t) for t in test["text"]]
@@ -161,7 +179,10 @@ def hate(limit):
 
     y = test["label"].to_numpy()
     res = {"n_test": len(test), "threshold": thr, "support_scale": sup, "cue_scale": cue,
+           "finetuned": bool(finetuned),
            "old_tfidf": _m_hate(y, (p_l_test >= 0.5).astype(int))}
+    if p_orig is not None:
+        res["roberta_original"] = _m_hate(y, (p_orig >= 0.5).astype(int))
     if p_t_test is not None:
         res["roberta_only"] = _m_hate(y, (p_t_test >= 0.5).astype(int))
     res["fuzzy_untuned"] = _m_hate(y, (scores(p_t_test, p_l_test, cues_test, 1.0, 1.0) >= 0.5).astype(int))

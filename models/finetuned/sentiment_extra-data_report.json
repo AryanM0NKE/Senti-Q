@@ -1,0 +1,49 @@
+{
+  "task": "sentiment",
+  "base_model": "cardiffnlp/twitter-roberta-base-sentiment-latest",
+  "device": "NVIDIA GeForce RTX 3050 Laptop GPU",
+  "training_data": [
+    "tweet_eval/sentiment train (45,615)",
+    "mteb/tweet_sentiment_extraction train (26,732)"
+  ],
+  "n_train": 72347,
+  "hyperparameters": {
+    "epochs": 2.0,
+    "lr": 1e-05,
+    "batch": 16,
+    "max_len": 128,
+    "eval_steps": 1130,
+    "early_stopping_patience": 3,
+    "fp16": true
+  },
+  "selection_metric": "macro_recall",
+  "best_checkpoint": "D:\\DSA (2026)\\SentimentIQ\\models\\finetuned\\_runs_sentiment\\checkpoint-6780",
+  "train_minutes": 18.4,
+  "before": {
+    "val": {
+      "accuracy": 0.7705,
+      "macro_f1": 0.7596,
+      "macro_recall": 0.7755
+    },
+    "test": {
+      "accuracy": 0.7217,
+      "macro_f1": 0.724,
+      "macro_recall": 0.7351
+    }
+  },
+  "after": {
+    "val": {
+      "accuracy": 0.7625,
+      "macro_f1": 0.7525,
+      "macro_recall": 0.7614
+    },
+    "test": {
+      "accuracy": 0.7125,
+      "macro_f1": 0.7138,
+      "macro_recall": 0.7313
+    }
+  },
+  "shipped": false,
+  "verdict": "NOT SHIPPED (no validation improvement); the app keeps the original model.",
+  "date": "2026-11-18 22:58"
+}

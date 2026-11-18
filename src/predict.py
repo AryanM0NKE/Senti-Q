@@ -1,5 +1,5 @@
 """
-src/predict.py — Inference helpers for SentimentIQ.
+src/predict.py — Inference helpers for Senti-Q.
 
 Loads the trained TF-IDF vectorizer and Logistic Regression classifier
 from disk and runs predictions on new text.

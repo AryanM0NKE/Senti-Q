@@ -19,6 +19,9 @@ models/*.pkl
 data/live_*.csv
 data/demo_results.csv
 data/cache/
+# Fine-tuned weights are ~500 MB each (too big for GitHub); reports are kept.
+models/finetuned/*
+!models/finetuned/*_report.json
 .pytest_cache/
 htmlcov/
 .coverage
