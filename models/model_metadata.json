@@ -29,7 +29,7 @@
   "n_train": 47919,
   "n_test": 11980,
   "n_total": 59899,
-  "train_date": "2026-10-23 12:53:00",
+  "train_date": "2026-11-18 21:44:13",
   "algorithm": "TF-IDF + Logistic Regression (multinomial)",
   "dataset_source": "cardiffnlp/tweet_eval \u2014 sentiment task (Cardiff NLP, HuggingFace)",
   "label_mapping": {

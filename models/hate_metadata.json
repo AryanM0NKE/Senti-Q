@@ -1,0 +1,32 @@
+{
+  "accuracy": 0.7259,
+  "precision_hate": 0.6573,
+  "recall_hate": 0.7308,
+  "f1_hate": 0.6921,
+  "macro_f1": 0.7225,
+  "confusion_matrix": [
+    [
+      1082,
+      416
+    ],
+    [
+      294,
+      798
+    ]
+  ],
+  "confusion_matrix_labels": [
+    "Not hate",
+    "Hate"
+  ],
+  "classification_report": "              precision    recall  f1-score   support\n\n    Not hate       0.79      0.72      0.75      1498\n        Hate       0.66      0.73      0.69      1092\n\n    accuracy                           0.73      2590\n   macro avg       0.72      0.73      0.72      2590\nweighted avg       0.73      0.73      0.73      2590\n",
+  "n_total": 12946,
+  "n_train": 10356,
+  "n_test": 2590,
+  "train_date": "2026-11-18 21:45:08",
+  "algorithm": "TF-IDF + Logistic Regression (balanced class weights)",
+  "dataset_source": "cardiffnlp/tweet_eval - hate task (SemEval-2019 Task 5)",
+  "threshold": 0.5,
+  "test_size": 0.2,
+  "random_seed": 42,
+  "caveat": "Trained on tweets about immigrants and women only. Performance on other topics, sarcasm or coded language will be lower than the test scores suggest."
+}

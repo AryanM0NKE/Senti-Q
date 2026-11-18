@@ -1,9 +1,41 @@
-# 🧠 SentimentIQ — Political Sentiment Intelligence Platform
+# SentimentIQ — Sentiment & Hate-Speech Intelligence Platform
 
-> A machine-learning-based political sentiment analysis platform that collects
-> real posts via the official X (Twitter) API v2, analyses them with a
-> TF-IDF + Logistic Regression classifier trained on the TweetEval dataset,
-> and presents results through a professional Streamlit dashboard.
+> Paste any X (Twitter) post link, a block of text, or run a live search, and
+> SentimentIQ reports each post's **sentiment** (Positive / Neutral / Negative)
+> and whether it contains **hate speech**. Two TF-IDF + Logistic Regression
+> classifiers trained on the TweetEval benchmark power it, behind a
+> black-and-white Streamlit dashboard.
+
+## Quick start
+
+```bash
+pip install -r requirements.txt
+python -m src.train_model     # sentiment model  (~1-3 min, downloads TweetEval)
+python -m src.hate_speech     # hate-speech model (~1 min)
+streamlit run app.py          # opens http://localhost:8501
+```
+
+**Input modes** (sidebar → Input):
+
+| Mode | Needs X token? | What it does |
+|---|---|---|
+| Post link or ID | No (optional) | Paste `https://x.com/user/status/123…` (or several). Uses the X API if a token is set, otherwise X's public embed endpoint. |
+| Paste text | No | Score any text; one post per line. |
+| Search X (live) | Yes | Keyword search of recent posts via X API v2. |
+| Demo mode | No | 15 built-in sample posts. |
+
+> Note: X's API access tiers change frequently and reading posts may require a paid
+> plan. Post-link mode therefore falls back to the public embed endpoint
+> automatically (text and date only, no like/repost counts).
+
+## Hate-speech model
+
+Binary classifier (Hate / Not hate) trained on the TweetEval `hate` task
+(SemEval-2019 Task 5). Class weights are balanced, and a post is flagged when the
+predicted probability is at least 0.5. **It was trained only on tweets targeting immigrants and women**,
+so it is weaker on other targets, sarcasm and coded language. Treat a flag as an
+estimate, never as a finding about a person. Swapping in a transformer
+(e.g. `cardiffnlp/twitter-roberta-base-hate`) is the natural upgrade.
 
 ---
 
@@ -169,13 +201,11 @@ pip install -r requirements.txt
    ```
 5. The `.env` file is listed in `.gitignore` — it will not be committed.
 
-**API Tier Notes:**
-| Tier | Monthly tweet cap | Max per request |
-|---|---|---|
-| Free | 500,000 reads | 10 tweets |
-| Basic ($100/mo) | 10,000 reads | 100 tweets |
-
-The app automatically adapts the page size to the Free tier default (10).
+**API access notes:** X changes its tiers and pricing often, and read access
+(search / post lookup) may require a paid plan or credits. Check the current
+limits in the X Developer Portal. If a lookup is refused, **Post link** mode
+falls back to the public embed endpoint automatically; live **search** has no
+such fallback.
 
 ---
 
@@ -418,8 +448,11 @@ SentimentIQ/
 # Install dependencies
 pip install -r requirements.txt
 
-# Train the model (downloads TweetEval automatically)
+# Train the sentiment model (downloads TweetEval automatically)
 python -m src.train_model
+
+# Train the hate-speech model
+python -m src.hate_speech
 
 # Run tests
 pytest tests/ -v

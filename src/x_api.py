@@ -21,9 +21,11 @@ IMPORTANT
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from html import unescape
 from typing import Optional
 
 import requests
@@ -68,12 +70,14 @@ class XPost:
     impressions: int = 0
     lang:       str = "und"
     author_id:  str = ""
+    username:   str = ""     # @handle without the "@", when known
+    via:        str = "api"  # "api" (authenticated) | "oembed" (public fallback)
 
     @property
     def url(self) -> str:
-        """Construct a public URL for the post (requires author_id)."""
-        if self.author_id:
-            return f"https://x.com/i/web/status/{self.post_id}"
+        """Public URL for the post."""
+        if self.username:
+            return f"https://x.com/{self.username}/status/{self.post_id}"
         return f"https://x.com/i/web/status/{self.post_id}"
 
     @property
@@ -179,6 +183,8 @@ def fetch_recent_posts(
             "query":       full_query,
             "max_results": page_size,
             "tweet.fields": ",".join(TWEET_FIELDS),
+            "expansions":  "author_id",
+            "user.fields": "username",
         }
         if next_token:
             params["next_token"] = next_token
@@ -261,6 +267,7 @@ def fetch_recent_posts(
         if not batch:
             break   # No more results
 
+        users = {u["id"]: u.get("username", "") for u in data.get("includes", {}).get("users", [])}
         for item in batch:
             metrics = item.get("public_metrics") or {}
             created_raw = item.get("created_at")
@@ -283,6 +290,7 @@ def fetch_recent_posts(
                 impressions= metrics.get("impression_count", 0),
                 lang       = item.get("lang", "und"),
                 author_id  = item.get("author_id", ""),
+                username   = users.get(item.get("author_id", ""), ""),
             ))
 
         # Pagination
@@ -305,3 +313,172 @@ def fetch_recent_posts(
         fetched_at=fetched_at,
         warning=warning,
     )
+
+
+# ---------------------------------------------------------------------------
+# Single-post lookup (paste a link or an ID)
+# ---------------------------------------------------------------------------
+
+LOOKUP_ENDPOINT = "https://api.twitter.com/2/tweets"
+OEMBED_ENDPOINT = "https://publish.twitter.com/oembed"
+
+_STATUS_URL_RE = re.compile(r"(?:twitter|x)\.com/[^/\s]+/status(?:es)?/(\d{1,25})", re.IGNORECASE)
+_BARE_ID_RE = re.compile(r"^\d{5,25}$")
+
+
+def extract_post_ids(raw: str) -> list[str]:
+    """
+    Pull post IDs out of free text: full links (x.com / twitter.com, any handle,
+    query strings allowed), or bare numeric IDs. Accepts several, separated by
+    spaces, commas or new lines. Duplicates are removed, order is kept.
+    """
+    ids: list[str] = []
+    for chunk in re.split(r"[\s,]+", raw.strip()):
+        if not chunk:
+            continue
+        m = _STATUS_URL_RE.search(chunk)
+        pid = m.group(1) if m else (chunk if _BARE_ID_RE.match(chunk) else None)
+        if pid and pid not in ids:
+            ids.append(pid)
+    return ids
+
+
+def _parse_dt(raw: Optional[str]) -> Optional[datetime]:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def fetch_posts_by_ids(ids: list[str], *, timeout: int = 30) -> FetchResult:
+    """Look up specific posts (max 100) with the authenticated X API v2 endpoint."""
+    fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    token = get_bearer_token()
+    if not token:
+        return FetchResult(error="X_BEARER_TOKEN is not configured.", fetched_at=fetched_at)
+
+    params = {
+        "ids": ",".join(ids[:100]),
+        "tweet.fields": ",".join(TWEET_FIELDS),
+        "expansions": "author_id",
+        "user.fields": "username,name",
+    }
+    try:
+        resp = requests.get(LOOKUP_ENDPOINT, headers={"Authorization": f"Bearer {token}"},
+                            params=params, timeout=timeout)
+    except requests.exceptions.ConnectionError:
+        return FetchResult(error="Network connection failed.", fetched_at=fetched_at)
+    except requests.exceptions.Timeout:
+        return FetchResult(error=f"Request timed out after {timeout}s.", fetched_at=fetched_at)
+
+    if resp.status_code != 200:
+        reasons = {
+            401: "the bearer token is invalid or revoked",
+            402: "the X developer account has no API credits or an inactive plan",
+            403: "the app's access tier does not include reading posts",
+            429: "the rate limit was hit",
+        }
+        why = reasons.get(resp.status_code, f"HTTP {resp.status_code}")
+        return FetchResult(error=f"X API lookup failed: {why}.", fetched_at=fetched_at)
+
+    data = resp.json()
+    users = {u["id"]: u.get("username", "") for u in data.get("includes", {}).get("users", [])}
+    posts = []
+    for item in data.get("data", []):
+        m = item.get("public_metrics") or {}
+        posts.append(XPost(
+            post_id=item["id"], text=item.get("text", ""), created_at=_parse_dt(item.get("created_at")),
+            likes=m.get("like_count", 0), retweets=m.get("retweet_count", 0),
+            replies=m.get("reply_count", 0), impressions=m.get("impression_count", 0),
+            lang=item.get("lang", "und"), author_id=item.get("author_id", ""),
+            username=users.get(item.get("author_id", ""), ""), via="api",
+        ))
+
+    missing = len(ids[:100]) - len(posts)
+    warning = (f"{missing} post(s) could not be retrieved (deleted, private or protected)."
+               if missing > 0 else None)
+    return FetchResult(posts=posts, total_fetched=len(posts), query=", ".join(ids),
+                       fetched_at=fetched_at, warning=warning)
+
+
+def _oembed_text(html_doc: str) -> str:
+    """Extract the post text from the <p> inside X's oEmbed blockquote."""
+    m = re.search(r"<p[^>]*>(.*?)</p>", html_doc, re.DOTALL | re.IGNORECASE)
+    if not m:
+        return ""
+    inner = re.sub(r"<br\s*/?>", "\n", m.group(1), flags=re.IGNORECASE)
+    inner = re.sub(r"<[^>]+>", "", inner)          # drop links/tags, keep their text
+    return unescape(inner).strip()
+
+
+def fetch_post_oembed(post_id: str, username: str = "i", *, timeout: int = 15) -> Optional[XPost]:
+    """
+    Public, token-free fallback: X's oEmbed endpoint returns the text of any
+    public post. No engagement metrics are available this way. Returns None if
+    the post is private, deleted or unreachable.
+    """
+    url = f"https://twitter.com/{username}/status/{post_id}"
+    try:
+        resp = requests.get(OEMBED_ENDPOINT, params={"url": url, "omit_script": "1", "dnt": "true"},
+                            timeout=timeout)
+    except requests.exceptions.RequestException:
+        return None
+    if resp.status_code != 200:
+        return None
+    payload = resp.json()
+    text = _oembed_text(payload.get("html", ""))
+    if not text:
+        return None
+
+    author_url = payload.get("author_url", "")
+    handle = author_url.rstrip("/").split("/")[-1] if author_url else ""
+    created = None
+    date_m = re.search(r">([A-Z][a-z]+ \d{1,2}, \d{4})</a>\s*</blockquote>", payload.get("html", ""))
+    if date_m:
+        try:
+            created = datetime.strptime(date_m.group(1), "%B %d, %Y").replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    return XPost(post_id=post_id, text=text, created_at=created, username=handle, via="oembed")
+
+
+def lookup_posts(raw_refs: str) -> FetchResult:
+    """
+    Resolve pasted links / IDs to posts. Tries the authenticated API first; for
+    anything it could not return (no token, plan without read access, etc.)
+    falls back to the public oEmbed endpoint.
+    """
+    ids = extract_post_ids(raw_refs)
+    fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    if not ids:
+        return FetchResult(error="No post link or ID found. Paste a link like "
+                                 "https://x.com/user/status/123456789 or just the numeric ID.",
+                           fetched_at=fetched_at)
+
+    posts: list[XPost] = []
+    notes: list[str] = []
+    if bearer_token_configured():
+        api = fetch_posts_by_ids(ids)
+        if api.error:
+            notes.append(f"{api.error} Used the public fallback instead (no engagement counts).")
+        else:
+            posts = api.posts
+            if api.warning:
+                notes.append(api.warning)
+
+    found = {p.post_id for p in posts}
+    for pid in (i for i in ids if i not in found):
+        p = fetch_post_oembed(pid)
+        if p:
+            posts.append(p)
+
+    if not posts:
+        return FetchResult(error="Could not retrieve any of those posts. They may be private, "
+                                 "deleted, or X may be blocking the request.",
+                           query=", ".join(ids), fetched_at=fetched_at)
+    order = {pid: n for n, pid in enumerate(ids)}
+    posts.sort(key=lambda p: order.get(p.post_id, 0))
+    return FetchResult(posts=posts, total_fetched=len(posts), query=", ".join(ids),
+                       fetched_at=fetched_at, warning=" ".join(notes) or None)
