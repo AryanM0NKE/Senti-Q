@@ -1,17 +1,16 @@
 // Senti-Q for X — background service worker.
 //
-// * Toolbar icon on a post's page: reads that post's replies, then opens Senti-Q.
-// * Toolbar icon on a timeline: opens the post in the middle of your screen, reads its
-//   replies, closes that tab and opens Senti-Q.
-// * Right-click a post's link -> "Read the reactions with Senti-Q".
-// * Links from Senti-Q ("Read the replies on X") end in #senti-q: the replies are read
-//   automatically and you're taken back to the Senti-Q tab you came from.
+// * Toolbar icon on a post's page: reads that post's replies right there.
+// * Toolbar icon anywhere else on X: pick mode. Click the post you want; it opens in the
+//   same tab, its replies are read, and you're taken back to where you were.
+// * Right-click a post's link -> "Read the reactions with Senti-Q" (same as picking it).
+// * Senti-Q's "Read the replies on X" links end in #senti-q: the replies are read
+//   automatically, that X tab closes, and you're back in the Senti-Q tab you came from.
 //
-// The replies travel inside the Senti-Q link itself (compressed), so nothing is stored
-// or sent anywhere else.
+// Results always go to one Senti-Q tab (reused, not a new tab every time). The replies
+// travel inside the Senti-Q link itself (compressed), so nothing is stored or sent elsewhere.
 
 const DEFAULTS = { appUrl: "http://localhost:8501", maxReplies: 100 };
-const MARK = "senti-q";
 const MAX_TOKEN = 24000;   // characters of packed replies in the Senti-Q link
 const POST_RE = /^https:\/\/(?:www\.)?(?:x|twitter)\.com\/(?:i\/web|[^/?#]+)\/status\/(\d+)/;
 const X_RE = /^https:\/\/(?:www\.)?(?:x|twitter)\.com\//;
@@ -20,6 +19,8 @@ async function appBase() {
   const { appUrl } = await chrome.storage.sync.get(DEFAULTS);
   return appUrl.replace(/\/+$/, "");
 }
+
+const safeDecode = (s) => { try { return decodeURIComponent(s); } catch (e) { return s; } };
 
 // ---------- packing: JSON -> raw deflate -> base64url ----------
 async function deflateBase64(obj) {
@@ -53,27 +54,22 @@ async function pack(data) {
 }
 
 // ---------- handing results to Senti-Q ----------
-async function deliver(data, xTab, openedByApp) {
+async function deliver(data, xTab, origin) {
   const app = await appBase();
   const postUrl = data.url || (xTab?.url || "").split("#")[0];
   const target = `${app}/?post=${encodeURIComponent(postUrl)}&r=${await pack(data)}`;
   const postId = (postUrl.match(/\/status\/(\d+)/) || [])[1];
 
-  // When Senti-Q asked for the replies ("Read the replies on X"), return to that Senti-Q tab:
-  // the one this X tab was opened from, else any Senti-Q tab showing this post. A toolbar
-  // click always opens a fresh Senti-Q tab, so an earlier analysis is never replaced.
+  // One Senti-Q tab: the one that asked (if Senti-Q asked), else one already showing this
+  // post, else the Senti-Q tab you used most recently. A new tab only if there is none.
+  const appTabs = (await chrome.tabs.query({})).filter((t) => (t.url || t.pendingUrl || "").startsWith(app));
   let appTab = null;
-  if (openedByApp && xTab?.openerTabId != null) {
-    try {
-      const t = await chrome.tabs.get(xTab.openerTabId);
-      if ((t.url || t.pendingUrl || "").startsWith(app)) appTab = t;
-    } catch (e) { /* opener closed */ }
-  }
-  if (!appTab && openedByApp && postId) {
-    const tabs = await chrome.tabs.query({});
+  if (origin === "app" && xTab?.openerTabId != null) appTab = appTabs.find((t) => t.id === xTab.openerTabId) || null;
+  if (!appTab && postId) {
     const marker = new RegExp(`/status/${postId}(?!\\d)`);
-    appTab = tabs.find((t) => (t.url || "").startsWith(app) && marker.test(decodeURIComponent(t.url))) || null;
+    appTab = appTabs.find((t) => marker.test(safeDecode(t.url || ""))) || null;
   }
+  if (!appTab && appTabs.length) appTab = appTabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0];
 
   if (appTab) {
     await chrome.tabs.update(appTab.id, { url: target, active: true });
@@ -81,27 +77,20 @@ async function deliver(data, xTab, openedByApp) {
   } else {
     await chrome.tabs.create({ url: target, index: xTab ? xTab.index + 1 : undefined });
   }
-  if (openedByApp && xTab) chrome.tabs.remove(xTab.id).catch(() => {});
+  if (origin === "app" && xTab) chrome.tabs.remove(xTab.id).catch(() => {});
 }
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
-  if (msg?.type === "sentiq:reactions") deliver(msg.data, sender.tab, !!msg.openedByApp);
+  if (msg?.type === "sentiq:reactions") deliver(msg.data, sender.tab, msg.origin || "here");
 });
 
 // ---------- starting a read ----------
 async function ensureContentScript(tabId) {
   try {
     await chrome.tabs.sendMessage(tabId, { type: "sentiq:ping" });
-  } catch (e) {   // tab was open before the extension was installed
+  } catch (e) {   // tab was open before the extension was installed or updated
     await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
   }
-}
-
-async function openAndRead(postUrl, fromTab) {
-  const clean = (postUrl.match(POST_RE) || [])[0];
-  if (!clean) return;
-  await chrome.tabs.create({ url: `${clean}#${MARK}`, active: true,
-                             index: fromTab ? fromTab.index + 1 : undefined, openerTabId: fromTab?.id });
 }
 
 async function flash(tab, text, title) {
@@ -117,15 +106,10 @@ async function flash(tab, text, title) {
 
 async function onAction(tab) {
   const url = tab.url || "";
-  if (!X_RE.test(url)) return flash(tab, "!", "Open a post on x.com, then click Senti-Q.");
+  if (!X_RE.test(url)) return flash(tab, "!", "Open x.com first, then click Senti-Q.");
   await ensureContentScript(tab.id);
-  if (POST_RE.test(url)) {
-    await chrome.tabs.sendMessage(tab.id, { type: "sentiq:collect" });
-    return;
-  }
-  const res = await chrome.tabs.sendMessage(tab.id, { type: "sentiq:centred" }).catch(() => null);
-  if (!res?.url) return flash(tab, "?", "No post found here. Scroll a post into view, or open it.");
-  await openAndRead(res.url, tab);
+  const type = POST_RE.test(url) ? "sentiq:collect" : "sentiq:pick";
+  await chrome.tabs.sendMessage(tab.id, { type });
 }
 
 chrome.action.onClicked.addListener((tab) => { onAction(tab); });
@@ -143,9 +127,12 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId === "sentiq-link" && info.linkUrl) return openAndRead(info.linkUrl, tab);
-  if (info.menuItemId === "sentiq-page" && tab) {
-    await ensureContentScript(tab.id);
+  if (!tab) return;
+  await ensureContentScript(tab.id);
+  if (info.menuItemId === "sentiq-link" && info.linkUrl) {
+    const clean = (info.linkUrl.match(POST_RE) || [])[0];
+    if (clean) await chrome.tabs.sendMessage(tab.id, { type: "sentiq:readLink", url: clean });
+  } else if (info.menuItemId === "sentiq-page") {
     await chrome.tabs.sendMessage(tab.id, { type: "sentiq:collect" });
   }
 });

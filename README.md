@@ -37,7 +37,11 @@ python -m src.hate_speech          # small TF-IDF hate-speech model (~1 min)
 streamlit run app.py
 ```
 
-The first analysis downloads the two RoBERTa language models (~1 GB, cached afterwards).
+**About the language models:** the two RoBERTa models (~1 GB) are downloaded **once**,
+on the very first run, into `%USERPROFILE%\.cache\huggingface`. After that they're
+loaded from disk, without contacting the internet, in the background as soon as Senti-Q
+opens. That takes about 10–15 seconds per start, mostly starting PyTorch, and they stay
+in memory until you close Senti-Q.
 
 ## Use it
 
@@ -49,8 +53,16 @@ First install the **Senti-Q for X** browser extension (one minute; see
   your signed-in X, the extension reads the replies, and you're brought straight back to
   the results (about 10–30 seconds).
 * **Or start on X:** open any post and click the Senti-Q icon in your toolbar. On a
-  timeline, the icon reads the post in the middle of your screen. You can also right-click
-  a post's timestamp → **Read the reactions with Senti-Q**.
+  timeline (or a profile or search), clicking the icon starts **pick mode**: posts highlight
+  as you hover, and you click the one you want (Esc cancels). The post opens in the same
+  tab, its replies are read, and you're taken back to where you were. You can also
+  right-click a post's timestamp → **Read the reactions with Senti-Q**.
+
+Results always appear in **one Senti-Q tab**, which is reused rather than a new tab each
+time. Senti-Q **remembers each post it has read** while it's running: going back to a
+post shows its last result instantly, and **Read again on X** refreshes it. A re-read
+with the same replies gives exactly the same result and says so. If X shows new
+replies, Senti-Q tells you what changed.
 
 **Why an extension?** X only shows replies to people who are signed in. Senti-Q doesn't
 use the X API, doesn't search X and never asks for your X password. The extension reads
@@ -209,6 +221,8 @@ tests/                     pytest suite (pytest tests -q)
 * **"This site can't be reached" at localhost:8501.** The server isn't running yet. Keep
   the `run.bat` window open and wait for your browser to open by itself; the first run
   takes several minutes.
+* **"Getting the language models ready…"** appears for a few seconds right after Senti-Q
+  starts, while the models load from disk. Nothing is being downloaded.
 * **"Read the replies on X" opens X but nothing comes back.** The extension isn't
   installed or enabled, or you aren't signed in to X in that browser. After installing or
   updating the extension, reload any open X tabs.

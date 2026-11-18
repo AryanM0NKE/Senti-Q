@@ -125,20 +125,29 @@ def encode(obj: dict) -> str:
 # Scoring and summary
 # ---------------------------------------------------------------------------
 
-def score_replies(collected: Collected) -> tuple[pd.DataFrame, int]:
+def score_replies(collected: Collected, cache: Optional[dict] = None) -> tuple[pd.DataFrame, int]:
     """
     Run the engine on every scoreable reply.
+    `cache` (text -> scores) lets a re-read skip replies that were already scored, so the
+    same reply always gets exactly the same result.
     Returns (scored replies, number of replies skipped because of their language).
     """
     rows = [r for r in collected.replies if r["lang"] in SCOREABLE_LANGS]
     skipped = len(collected.replies) - len(rows)
     if not rows:
         return pd.DataFrame(), skipped
-    df = pd.DataFrame(rows)
-    out = engine.analyze(df["text"].tolist())
-    for col in out.columns:
-        df[col] = out[col].values
+    cache = {} if cache is None else cache
+    texts = [r["text"] for r in rows]
+    todo = [t for t in dict.fromkeys(texts) if t not in cache]
+    if todo:
+        cache.update(zip(todo, engine.analyze(todo).to_dict("records")))
+    df = pd.concat([pd.DataFrame(rows), pd.DataFrame([cache[t] for t in texts])], axis=1)
     return df.sort_values("likes", ascending=False, kind="stable").reset_index(drop=True), skipped
+
+
+def compare(previous_ids: set, ids: set) -> dict:
+    """How a new read of a post differs from the last one."""
+    return {"same": previous_ids == ids, "new": len(ids - previous_ids), "gone": len(previous_ids - ids)}
 
 
 @dataclass

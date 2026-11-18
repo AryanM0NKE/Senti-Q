@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import hashlib
 import sys
+import threading
+from collections import OrderedDict
+from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
@@ -48,18 +51,75 @@ def _html(s: str) -> None:
 # ---------------------------------------------------------------------------
 
 @st.cache_resource(show_spinner=False)
-def _warm_models() -> bool:
-    """Load the language models once per server process (first run downloads ~1 GB)."""
-    if transformer_models.available():
-        transformer_models.sentiment_probs(["warm up"])
-        transformer_models.hate_probs(["warm up"])
-    return True
+def _model_loader() -> dict:
+    """
+    Start loading the language models in the background, once per Senti-Q start.
+    They're read from disk (downloaded only on the very first run), so by the time a
+    post is analysed they are usually ready.
+    """
+    state = {"done": threading.Event(), "downloading": False, "error": None}
+    if not transformer_models.available():
+        state["done"].set()
+        return state
+    state["downloading"] = not transformer_models.models_cached()
+
+    def load():
+        try:
+            transformer_models.sentiment_probs(["warm up"])
+            transformer_models.hate_probs(["warm up"])
+        except Exception as exc:          # surfaced when an analysis needs the models
+            state["error"] = exc
+        finally:
+            state["done"].set()
+
+    threading.Thread(target=load, name="senti-q-model-loader", daemon=True).start()
+    return state
 
 
 def _ensure_models() -> None:
-    if transformer_models.available() and not transformer_models.is_loaded():
-        with st.spinner("Loading the language models. The first time downloads about 1 GB ..."):
-            _warm_models()
+    loader = _model_loader()
+    if not loader["done"].is_set():
+        msg = ("Downloading the language models. This happens only once (about 1 GB) ..."
+               if loader["downloading"] else "Getting the language models ready (a few seconds after Senti-Q starts) ...")
+        with st.spinner(msg):
+            loader["done"].wait(timeout=900)
+
+
+@st.cache_resource(show_spinner=False)
+def _memory() -> dict:
+    """
+    What this Senti-Q run remembers, shared by all tabs:
+      reads  - the last read of each post (so going back, or re-opening a post, shows it again)
+      scores - every reply text already scored (a re-read never re-scores the same reply)
+    """
+    return {"reads": OrderedDict(), "scores": {}}
+
+
+def _remember(pid: str, result: dict) -> None:
+    mem = _memory()
+    collected = result["collected"]
+    ids = {r["id"] for r in collected.replies}
+    previous = mem["reads"].get(pid)
+    if previous is not None:
+        result["changes"] = {**reactions.compare(previous["ids"], ids), "since": previous["at"]}
+    mem["reads"][pid] = {"result": result, "ids": ids,
+                         "at": collected.collected_at or datetime.now(timezone.utc)}
+    mem["reads"].move_to_end(pid)
+    while len(mem["reads"]) > 100:
+        mem["reads"].popitem(last=False)
+    if len(mem["scores"]) > 50_000:
+        mem["scores"].clear()
+
+
+def _recall(pid: str) -> dict | None:
+    """The last read of this post, if it was read since Senti-Q started."""
+    previous = _memory()["reads"].get(pid)
+    if previous is None:
+        return None
+    result = dict(previous["result"])
+    result.pop("changes", None)
+    result["recalled"] = True
+    return result
 
 
 def _canonical(link: str) -> tuple[str, str] | None:
@@ -103,8 +163,10 @@ def _build(link: str, collected: reactions.Collected | None) -> dict:
               "replies": None, "summary": None, "skipped_lang": 0}
     if collected and collected.replies:
         with st.spinner(f"Reading {len(collected.replies)} replies ..."):
-            df, skipped = reactions.score_replies(collected)
+            df, skipped = reactions.score_replies(collected, _memory()["scores"])
         result.update(replies=df, summary=reactions.summarize(df), skipped_lang=skipped)
+    if collected and not collected.error:
+        _remember(pid, result)
     return result
 
 
@@ -193,15 +255,34 @@ def _reactions_html(s: reactions.Summary, a: dict) -> str:
     if line:
         html += f'<div class="insight">{escape(line)}</div>'
 
+    changes = a.get("changes")
+    if changes:
+        since = changes["since"].astimezone().strftime("%H:%M")
+        if changes["same"]:
+            html += (f'<div class="compare">Same {s.n} replies as your last read at {since}, '
+                     'so the same result.</div>')
+        else:
+            parts = []
+            if changes["new"]:
+                parts.append(f'{changes["new"]} new {"reply" if changes["new"] == 1 else "replies"}')
+            if changes["gone"]:
+                parts.append(f'{changes["gone"]} no longer shown by X')
+            html += f'<div class="compare">Since your last read at {since}: {", ".join(parts)}.</div>'
+
     notes = []
     if collected.collected_at is not None:
-        notes.append(f"Read from X in your browser at {collected.collected_at.astimezone().strftime('%H:%M')}")
+        stamp = collected.collected_at.astimezone().strftime("%H:%M")
+        notes.append(f"Remembered from your read at {stamp}" if a.get("recalled")
+                     else f"Read from X in your browser at {stamp}")
+    def n_of(n: int, one: str, many: str) -> str:
+        return f"{n} {one if n == 1 else many}"
+
     if a["skipped_lang"]:
-        notes.append(f"{a['skipped_lang']} replies in other languages not scored")
+        notes.append(n_of(a["skipped_lang"], "reply in another language", "replies in other languages") + " not scored")
     if collected.media_only:
-        notes.append(f"{collected.media_only} image-only replies")
+        notes.append(n_of(collected.media_only, "image-only reply", "image-only replies"))
     if collected.self_replies:
-        notes.append(f"{collected.self_replies} by the author left out")
+        notes.append(n_of(collected.self_replies, "reply", "replies") + " by the author left out")
     if collected.trimmed:
         notes.append(f"{collected.trimmed} more not included")
     if notes:
@@ -280,6 +361,7 @@ def _render(a: dict) -> None:
                        "private.", "Post not found on X")
         elif summary is not None and summary.n > 0:
             _html(_reactions_html(summary, a))
+            st.link_button("Read again on X  ↗", post["url"] + READ_MARK, type="tertiary")
         elif collected is not None:
             extra = f" ({collected.media_only} image-only replies were skipped.)" if collected.media_only else ""
             _cta(post, "No written replies were found on this post yet." + escape(extra), "No replies yet")
@@ -307,8 +389,9 @@ with st.container(horizontal=True, horizontal_alignment="distribute", vertical_a
             "1. Open `chrome://extensions` (or `edge://extensions`) and switch on **Developer mode**.\n"
             "2. Click **Load unpacked** and choose the `browser-extension` folder in this project.\n"
             "3. Pin **Senti-Q for X** to your toolbar.\n\n"
-            "**Then:** open any post on X and click the Senti-Q icon. Or paste a link here and press "
-            "**Read the replies on X**."
+            "**Then:** open a post on X and click the Senti-Q icon. On a timeline, click the icon "
+            "and then the post you want. Or paste a link here and press **Read the replies on X**.\n\n"
+            "After installing or updating the extension, reload any X tabs that were already open."
         )
 
 _has_result = bool(st.query_params.get("post") or st.query_params.get("r") or st.session_state.analysis)
@@ -322,6 +405,7 @@ _html(f"""
 """)
 
 status = engine.status()
+_model_loader()            # starts loading the language models in the background (once per start)
 if not status["ready"]:
     _html('<div class="notice dark"><b>Setup isn\'t finished.</b> Close this tab and double-click '
           '<code>run.bat</code> in the project folder. It installs everything the first time.</div>')
@@ -352,7 +436,7 @@ elif status["ready"] and qp_post:
     found = _canonical(qp_post)
     if found and found[0] != st.session_state.analysis_id:
         st.session_state["link_input"] = found[1]
-        st.session_state.analysis = _build(qp_post, None)
+        st.session_state.analysis = _recall(found[0]) or _build(qp_post, None)
         st.session_state.analysis_id = found[0]
 
 with st.form("open_post", border=False):
@@ -372,7 +456,7 @@ if submitted and status["ready"]:
         st.session_state.analysis_id = None
     elif found[0] != st.session_state.analysis_id or st.session_state.analysis is None \
             or st.session_state.analysis.get("error"):
-        st.session_state.analysis = _build(link, None)
+        st.session_state.analysis = _recall(found[0]) or _build(link, None)
         st.session_state.analysis_id = found[0]
         st.query_params.clear()
         st.query_params["post"] = found[1]

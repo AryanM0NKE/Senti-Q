@@ -175,17 +175,22 @@ html, body, .stApp, button, input, textarea, select, [class*="css"] {
 .insight { font-family: var(--serif); font-style: italic; font-size: 1.35rem; line-height: 1.35; color: var(--ink);
            padding: 4px 4px 0; letter-spacing: -0.01em; }
 .foot { font-size: .78rem; color: var(--ink-3); padding: 0 4px; line-height: 1.6; }
+.compare { font-size: .86rem; color: var(--ink); padding: 10px 14px; border-radius: 12px; background: var(--wash);
+           border: 1px solid var(--line); }
+[data-testid="stBaseLinkButton-tertiary"] { color: var(--ink-2) !important; font-size: .88rem !important; padding: 0 4px !important;
+                                            min-height: 0 !important; margin-top: 2px; }
+[data-testid="stBaseLinkButton-tertiary"]:hover { color: var(--ink) !important; text-decoration: underline; }
 
 /* Call to action when the replies haven't been read yet */
 .cta { padding: 26px 26px 22px; background: var(--wash); }
 .cta-title { font-family: var(--serif); font-size: 2.2rem; line-height: 1.05; letter-spacing: -0.02em; margin: 2px 0 10px; color: var(--ink); }
 .cta p { color: var(--ink-2); font-size: .95rem; line-height: 1.55; margin: 0; }
-[data-testid="stLinkButton"] a, [data-testid="stBaseLinkButton-primary"] {
+[data-testid="stBaseLinkButton-primary"] {
     border-radius: 999px !important; background: var(--ink) !important; color: #fff !important; border: 0 !important;
     min-height: 48px; padding: 0 24px !important; font-weight: 500 !important; margin-top: 14px;
 }
-[data-testid="stLinkButton"] a p { color: #fff !important; }
-[data-testid="stLinkButton"] a:hover { background: #262626 !important; }
+[data-testid="stBaseLinkButton-primary"] p { color: #fff !important; }
+[data-testid="stBaseLinkButton-primary"]:hover { background: #262626 !important; }
 
 /* What people are saying */
 .section-title { font-family: var(--serif); font-size: 2.6rem; letter-spacing: -0.02em; color: var(--ink);

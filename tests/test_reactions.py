@@ -100,6 +100,28 @@ def test_language_filter(monkeypatch):
     assert skipped == 1 and sorted(df["id"]) == ["1", "3"]
 
 
+def test_score_cache_reuses_previous_scores(monkeypatch):
+    calls = []
+
+    def fake_analyze(texts):
+        calls.append(list(texts))
+        return pd.DataFrame({"predicted_sentiment": ["Positive"] * len(texts)})
+
+    monkeypatch.setattr(reactions.engine, "analyze", fake_analyze)
+    cache = {}
+    first = reactions.decode(reactions.encode(_payload(r=[["1", "a", "great", 0, "en"], ["2", "b", "bad", 0, "en"]])))
+    second = reactions.decode(reactions.encode(_payload(r=[["1", "a", "great", 0, "en"], ["3", "c", "new one", 0, "en"]])))
+    reactions.score_replies(first, cache)
+    df, _ = reactions.score_replies(second, cache)
+    assert calls == [["great", "bad"], ["new one"]]          # "great" was not scored twice
+    assert list(df["predicted_sentiment"]) == ["Positive", "Positive"]
+
+
+def test_compare_reads():
+    assert reactions.compare({"1", "2"}, {"1", "2"}) == {"same": True, "new": 0, "gone": 0}
+    assert reactions.compare({"1", "2"}, {"2", "3", "4"}) == {"same": False, "new": 2, "gone": 1}
+
+
 # --- fuzzy verdict ----------------------------------------------------------
 
 @pytest.mark.parametrize("pos,neu,neg,expected", [

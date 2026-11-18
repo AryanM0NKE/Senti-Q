@@ -9,10 +9,10 @@ src/transformer_models.py — Twitter-RoBERTa models (CardiffNLP, optionally fin
 If `python -m src.finetune` produced a better model, it lives in
 models/finetuned/<task>/ and is used automatically instead of the Hub model.
 
-Weights download from the Hugging Face Hub on first use (~500 MB each) and are
-cached in ~/.cache/huggingface afterwards. Everything here is optional: if
-`torch` / `transformers` are not installed, `available()` is False and the app
-falls back to the TF-IDF models.
+Weights download from the Hugging Face Hub once (~500 MB each) and are cached in
+~/.cache/huggingface. Later loads read that cache directly, without contacting the
+Hub. Everything here is optional: if `torch` / `transformers` are not installed,
+`available()` is False and the app falls back to the TF-IDF models.
 """
 
 from __future__ import annotations
@@ -20,9 +20,12 @@ from __future__ import annotations
 import importlib.util
 import os
 import re
+import threading
 from pathlib import Path
 
 import numpy as np
+
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
 ROOT = Path(__file__).parent.parent
 FINETUNED_DIR = ROOT / "models" / "finetuned"
@@ -45,11 +48,28 @@ BATCH_SIZE = 32
 MAX_LENGTH = 128
 
 _pipes: dict = {}
+_lock = threading.Lock()          # the app loads models in a background thread
 
 
 def available() -> bool:
     """True if torch and transformers are importable."""
     return all(importlib.util.find_spec(m) is not None for m in ("torch", "transformers"))
+
+
+def _is_cached(model_name: str) -> bool:
+    if Path(model_name).exists():
+        return True
+    try:
+        from huggingface_hub import try_to_load_from_cache
+        return any(isinstance(try_to_load_from_cache(model_name, f), str)
+                   for f in ("model.safetensors", "pytorch_model.bin"))
+    except Exception:
+        return False
+
+
+def models_cached() -> bool:
+    """True if both models are already on this computer (so nothing will be downloaded)."""
+    return _is_cached(SENTIMENT_MODEL) and _is_cached(HATE_MODEL)
 
 
 def is_finetuned(task: str) -> bool:
@@ -74,14 +94,22 @@ def _device() -> int:
     return 0 if torch.cuda.is_available() else -1
 
 
+def _load(model_name: str, local_only: bool):
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer, pipeline
+    tok = AutoTokenizer.from_pretrained(model_name, local_files_only=local_only)
+    model = AutoModelForSequenceClassification.from_pretrained(model_name, local_files_only=local_only)
+    return pipeline("text-classification", model=model, tokenizer=tok, top_k=None,
+                    truncation=True, max_length=MAX_LENGTH, device=_device())
+
+
 def _pipe(model_name: str):
-    if model_name not in _pipes:
-        from transformers import pipeline
-        _pipes[model_name] = pipeline(
-            "text-classification", model=model_name, tokenizer=model_name,
-            top_k=None, truncation=True, max_length=MAX_LENGTH, device=_device(),
-        )
-    return _pipes[model_name]
+    with _lock:
+        if model_name not in _pipes:
+            try:          # already on disk: load it without contacting the Hub
+                _pipes[model_name] = _load(model_name, local_only=True)
+            except (OSError, ValueError):   # first run: download it (once)
+                _pipes[model_name] = _load(model_name, local_only=False)
+        return _pipes[model_name]
 
 
 def _scores(model_name: str, texts: list[str]) -> list[dict]:

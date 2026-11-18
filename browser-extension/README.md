@@ -21,9 +21,14 @@ Updating: after pulling a new version, click the reload icon on the extension's 
 * **From Senti-Q:** paste a post link, press **Analyse**, then **Read the replies on X**.
   The post opens, the replies are read (a small black pill shows progress), the tab closes
   and you're back in Senti-Q with the results.
-* **On a post's page:** click the Senti-Q icon.
-* **Scrolling a timeline:** click the icon to read the post in the middle of your screen.
+* **On a post's page:** click the Senti-Q icon. That post is read right there.
+* **On a timeline, profile or search:** click the icon to start **pick mode**. Hover to
+  highlight a post, then click the one you want (Esc cancels). It opens in the same tab,
+  its replies are read, and you're taken back to where you were.
 * **Anywhere on X:** right-click a post's timestamp → **Read the reactions with Senti-Q**.
+
+Results always go to **one Senti-Q tab**: the one you came from, one already showing that
+post, or the Senti-Q tab you used last. A new tab is opened only if none is open.
 
 **Options** (right-click the icon → Options): the Senti-Q address (default
 `http://localhost:8501`) and how many replies to read per post (50–300, default 100).
