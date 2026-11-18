@@ -1,7 +1,7 @@
 # SentimentIQ — Political Sentiment Intelligence Platform
 # Python 3.10+
 
-streamlit>=1.32.0
+streamlit>=1.50.0
 pandas>=2.0.0
 numpy>=1.26.0
 scikit-learn>=1.4.0
@@ -14,3 +14,9 @@ pytest>=8.0.0
 seaborn>=0.13.0
 matplotlib>=3.8.0
 datasets>=2.18.0
+
+# Improved engine: RoBERTa transformers + VADER lexicon + fuzzy-logic fusion.
+# On Windows/Linux, the default PyPI torch wheel works on CPU (no GPU needed).
+torch>=2.2.0
+transformers>=4.40.0
+vaderSentiment>=3.3.2

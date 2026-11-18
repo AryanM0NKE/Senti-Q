@@ -57,7 +57,7 @@ def _section(kicker: str, title: str, blurb: str = "") -> None:
 # ---------------------------------------------------------------------------
 from html import escape
 
-from src import x_api, predict, hate_speech, visualizations
+from src import x_api, predict, hate_speech, visualizations, engine, transformer_models
 from data.demo_posts import DEMO_POSTS
 
 
@@ -118,16 +118,20 @@ def _posts_to_df(posts: list) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+@st.cache_resource(show_spinner=False)
+def _warm_models() -> bool:
+    """Load the transformer models once per server process (first run downloads them)."""
+    if transformer_models.available():
+        transformer_models.sentiment_probs(["warm up"])
+        transformer_models.hate_probs(["warm up"])
+    return True
+
+
 def _run_predictions(df: pd.DataFrame) -> pd.DataFrame:
-    """Add sentiment (always) and hate-speech (when that model is trained) columns."""
-    texts = df["text"].tolist()
-    sent = predict.predict_batch(texts)
-    for col in ["predicted_sentiment", "prob_negative", "prob_neutral", "prob_positive"]:
-        df[col] = sent[col].values
-    if hate_speech.model_is_trained():
-        hate = hate_speech.predict_batch(texts)
-        for col in ["hate_label", "prob_hate", "is_hate"]:
-            df[col] = hate[col].values
+    """Run the fuzzy ensemble engine and append its columns."""
+    out = engine.analyze(df["text"].tolist())
+    for col in out.columns:
+        df[col] = out[col].values
     return df
 
 
@@ -239,14 +243,31 @@ def _post_card(row) -> str:
         meta_bits.append("<span>Pasted text</span>")
 
     badges = f'<span class="badge badge-{sentiment}"><span class="pfx">Sentiment</span>{sentiment}</span>'
+    if row.get("sentiment_confidence"):
+        badges += (f'<span class="badge badge-Clear"><span class="pfx">Confidence</span>'
+                   f'{escape(str(row["sentiment_confidence"]))}</span>')
     probs = [_prob_bar("Positive", row["prob_positive"], "#1d1d1f"),
              _prob_bar("Neutral",  row["prob_neutral"],  "#8e8e93"),
              _prob_bar("Negative", row["prob_negative"], "#c7c7cc")]
+    severity = str(row.get("hate_severity") or ("Hate" if flagged else "None"))
     if has_hate:
-        badges += (f'<span class="badge badge-Hate"><span class="pfx">Hate speech</span>Flagged</span>'
-                   if flagged else
-                   '<span class="badge badge-Clear"><span class="pfx">Hate speech</span>None detected</span>')
-        probs.append(_prob_bar("Hate speech", row["prob_hate"], "#000000"))
+        if flagged:
+            badges += f'<span class="badge badge-Hate"><span class="pfx">Hate speech</span>{escape(severity)}</span>'
+        elif severity == "Offensive":
+            badges += '<span class="badge badge-Negative"><span class="pfx">Hate speech</span>Offensive, not hate</span>'
+        else:
+            badges += '<span class="badge badge-Clear"><span class="pfx">Hate speech</span>None detected</span>'
+        probs.append(_prob_bar("Hate score", row["prob_hate"], "#000000"))
+
+    reasons = []
+    for key in ("sentiment_notes", "hate_notes"):
+        val = row.get(key)
+        if isinstance(val, (list, tuple)):
+            reasons += [str(v) for v in val]
+    why = ""
+    if reasons:
+        why = ('<div class="why"><span>Why</span><ul>'
+               + "".join(f"<li>{escape(r)}</li>" for r in reasons[:4]) + "</ul></div>")
 
     text_html = escape(str(row["text"])).replace("\n", "<br>")
     return (
@@ -255,7 +276,7 @@ def _post_card(row) -> str:
         f'<div class="post-text">&ldquo;{text_html}&rdquo;</div>'
         f'<div class="meta-row">{"".join(meta_bits)}</div>'
         f'<div class="probs{" four" if has_hate else ""}">{"".join(probs)}</div>'
-        f'</div>'
+        f'{why}</div>'
     )
 
 
@@ -298,18 +319,21 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    _html('<div class="side-title">Models</div>')
-    sent_ok, hate_ok = predict.model_is_trained(), hate_speech.model_is_trained()
-    sm, hm = predict.load_metadata() or {}, hate_speech.load_metadata() or {}
+    _html('<div class="side-title">Engine</div>')
+    eng = engine.status()
+    sent_ok, hate_ok = eng["ready"], eng["hate_ready"]
+
+    def _row(ok: bool, name: str, hint: str = "") -> str:
+        h = f'<div class="side-note" style="margin:0 0 6px 16px">{hint}</div>' if hint and not ok else ""
+        return (f'<div class="side-status" style="margin-bottom:4px"><span class="dot{"" if ok else " off"}">'
+                f'</span>{name}</div>{h}')
+
     _html(
-        f'<div class="side-status"><span class="dot{"" if sent_ok else " off"}"></span>'
-        f'Sentiment {"ready" if sent_ok else "not trained"}</div>'
-        + (f'<div class="side-note" style="margin:2px 0 10px 16px">Accuracy {sm.get("accuracy", "—")}</div>' if sent_ok else
-           '<div class="side-note" style="margin:2px 0 10px 16px"><code>python -m src.train_model</code></div>')
-        + f'<div class="side-status"><span class="dot{"" if hate_ok else " off"}"></span>'
-        f'Hate speech {"ready" if hate_ok else "not trained"}</div>'
-        + (f'<div class="side-note" style="margin:2px 0 0 16px">Accuracy {hm.get("accuracy", "—")}</div>' if hate_ok else
-           '<div class="side-note" style="margin:2px 0 0 16px"><code>python -m src.hate_speech</code></div>')
+        _row(eng["transformer"], "RoBERTa transformers", "<code>pip install -r requirements.txt</code>")
+        + _row(eng["vader"], "VADER lexicon", "<code>pip install vaderSentiment</code>")
+        + _row(eng["tfidf_sentiment"], "TF-IDF sentiment", "<code>python -m src.train_model</code>")
+        + _row(eng["tfidf_hate"], "TF-IDF hate speech", "<code>python -m src.hate_speech</code>")
+        + _row(True, "Fuzzy-logic fusion")
     )
 
     st.markdown("---")
@@ -337,14 +361,22 @@ _html("""
 # ---------------------------------------------------------------------------
 if not sent_ok:
     _notice(
-        "<strong>The sentiment model hasn't been trained yet.</strong><br>"
-        "Run <code>python -m src.train_model</code> in your terminal (about 1&ndash;3 minutes).",
+        "<strong>No model available yet.</strong><br>"
+        "Install the dependencies with <code>pip install -r requirements.txt</code> (adds the RoBERTa "
+        "transformers), or train the lightweight model with <code>python -m src.train_model</code>.",
         "alert",
+    )
+elif not eng["transformer"]:
+    _notice(
+        "<strong>Running in lightweight mode.</strong> The RoBERTa transformers aren't installed, so "
+        "results use TF-IDF + VADER only and are less accurate. Run "
+        "<code>pip install -r requirements.txt</code> and restart for the full engine.",
+        "outline",
     )
 if sent_ok and not hate_ok:
     _notice(
-        "<strong>Hate-speech detection is off.</strong> Train it with "
-        "<code>python -m src.hate_speech</code> (under a minute) and refresh.",
+        "<strong>Hate-speech detection is off.</strong> Install the transformers or train it with "
+        "<code>python -m src.hate_speech</code>, then refresh.",
         "outline",
     )
 
@@ -378,14 +410,16 @@ with col_refresh:
 # ---------------------------------------------------------------------------
 if run_clicked:
     if not sent_ok:
-        _notice("Cannot analyse yet &mdash; train the sentiment model first "
-                "(<code>python -m src.train_model</code>).", "alert")
+        _notice("Cannot analyse yet &mdash; no model is available (see the notice above).", "alert")
     else:
         with st.spinner("Fetching ..."):
             collected = _collect(source)
         if collected is not None:
             raw_df, meta = collected
-            with st.spinner("Running models ..."):
+            if eng["transformer"] and not transformer_models.is_loaded():
+                with st.spinner("Loading RoBERTa models (the first run downloads about 1 GB) ..."):
+                    _warm_models()
+            with st.spinner("Running the fuzzy ensemble ..."):
                 try:
                     st.session_state.results_df = _run_predictions(raw_df)
                     st.session_state.fetch_meta = meta
@@ -436,21 +470,21 @@ def _render_charts(df: pd.DataFrame, has_hate: bool, counts: dict):
     c1, c2 = st.columns([1, 1], gap="large")
     with c1:
         _html('<div class="chart-title">Sentiment distribution</div>')
-        st.plotly_chart(visualizations.donut_chart(counts), use_container_width=True,
+        st.plotly_chart(visualizations.donut_chart(counts), width="stretch",
                         config={"displayModeBar": False})
     with c2:
         if has_hate:
             n_hate = int(df["is_hate"].sum())
             _html('<div class="chart-title">Hate speech</div>')
             st.plotly_chart(visualizations.hate_donut(n_hate, len(df) - n_hate),
-                            use_container_width=True, config={"displayModeBar": False})
+                            width="stretch", config={"displayModeBar": False})
         else:
             _html('<div class="chart-title">Sentiment counts</div>')
-            st.plotly_chart(visualizations.bar_chart(counts), use_container_width=True,
+            st.plotly_chart(visualizations.bar_chart(counts), width="stretch",
                             config={"displayModeBar": False})
     if len(df) > 5 and df["created_at"].notna().any():
         _html('<div class="chart-title" style="margin-top:24px">Trend over time</div>')
-        st.plotly_chart(visualizations.trend_chart(df), use_container_width=True,
+        st.plotly_chart(visualizations.trend_chart(df), width="stretch",
                         config={"displayModeBar": False})
 
 
@@ -480,10 +514,10 @@ if st.session_state.results_df is not None:
 
     _section("Data", "Take it with you.")
     export_cols = ["post_id", "username", "text", "predicted_sentiment",
-                   "prob_positive", "prob_neutral", "prob_negative",
-                   "hate_label", "prob_hate", "created_at", "likes", "retweets", "replies"]
+                   "prob_positive", "prob_neutral", "prob_negative", "sentiment_confidence",
+                   "hate_label", "hate_severity", "prob_hate", "created_at", "likes", "retweets", "replies"]
     export_df = df[[c for c in export_cols if c in df.columns]]
-    st.dataframe(export_df, use_container_width=True, hide_index=True)
+    st.dataframe(export_df, width="stretch", hide_index=True)
     st.download_button(
         label="Download CSV", data=_df_to_csv(export_df),
         file_name=f"sentimentiq_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
@@ -516,13 +550,42 @@ def _render_model_panel(title: str, m: dict, rows: list, labels_default: list):
         if cm:
             st.plotly_chart(
                 visualizations.confusion_matrix_chart(cm, m.get("confusion_matrix_labels", labels_default)),
-                use_container_width=True, config={"displayModeBar": False})
+                width="stretch", config={"displayModeBar": False})
     if m.get("caveat"):
         _notice(f"<strong>Caveat.</strong> {escape(m['caveat'])}", "outline")
 
 
 _section("Model performance", "How well it works.",
-         "Computed on held-out test sets the models never saw during training.")
+         "Every engine scored on the same untouched TweetEval test sets.")
+
+bench = engine.load_benchmark()
+if bench:
+    NAMES = [("old_tfidf", "Original TF-IDF model"), ("vader_only", "VADER lexicon only"),
+             ("roberta_only", "RoBERTa only"), ("fuzzy_ensemble", "Fuzzy ensemble (current)")]
+
+    def _bench_table(res: dict, cols: list) -> str:
+        head = "".join(f"<th>{c[1]}</th>" for c in cols)
+        body = ""
+        for key, name in NAMES:
+            if key not in res:
+                continue
+            cells = "".join(f"<td>{res[key].get(c[0], 0):.1%}</td>" for c in cols)
+            strong = ' style="font-weight:700"' if key == "fuzzy_ensemble" else ""
+            body += f"<tr{strong}><td>{name}</td>{cells}</tr>"
+        return (f'<table class="spec-table bench"><tr><th>Engine</th>{head}</tr>{body}</table>')
+
+    b1, b2 = st.columns([1, 1], gap="large")
+    with b1:
+        s = bench["sentiment"]
+        _html(f'<div class="chart-title">Sentiment &middot; {s["n_test"]:,} test tweets</div>')
+        _html(_bench_table(s, [("accuracy", "Accuracy"), ("macro_f1", "Macro F1"), ("macro_recall", "Macro recall")]))
+    with b2:
+        h = bench["hate"]
+        _html(f'<div class="chart-title">Hate speech &middot; {h["n_test"]:,} test tweets</div>')
+        _html(_bench_table(h, [("accuracy", "Accuracy"), ("macro_f1", "Macro F1"), ("recall_hate", "Hate recall")]))
+    _html(f'<div class="hint" style="margin-top:14px">{escape(bench.get("protocol", ""))} '
+          f'Run <code>python -m src.evaluate</code> to reproduce.</div>')
+    _html('<div class="chart-title" style="font-size:1.15rem;margin-top:40px">Lightweight TF-IDF models</div>')
 
 sm_, hm_ = predict.load_metadata(), hate_speech.load_metadata()
 if sm_:
@@ -545,8 +608,8 @@ if not sm_ and not hm_:
 # ---------------------------------------------------------------------------
 _section("Responsible use", "Know the limits.")
 _notice("""
-<strong>Baseline models.</strong> TF-IDF + Logistic Regression is fast and explainable but misses sarcasm, irony, context and coded language.<br>
-<strong>Narrow hate-speech training data.</strong> The hate model learned from tweets about immigrants and women; other targets and topics are weaker.<br>
+<strong>Still imperfect.</strong> The RoBERTa + fuzzy ensemble handles context, negation and some sarcasm far better than word counts, but subtle irony and new coded language can still fool it.<br>
+<strong>Explainable, not infallible.</strong> The "Why" lines show which fuzzy rules fired; use them to sanity-check a verdict.<br>
 <strong>Estimates, not verdicts.</strong> A flag is a probability, not a finding. Never use it to judge or report an individual.<br>
 <strong>Sampling bias.</strong> Keyword search overrepresents people engaging with those terms.<br>
 <strong>Data privacy.</strong> Follow the X Developer Policy for storing, displaying and deleting posts.<br>

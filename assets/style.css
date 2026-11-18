@@ -123,6 +123,12 @@ html, body, [class*="css"], .stApp, button, input, textarea, select {
 .post-card.flagged { border-color: var(--ink); }
 .hint { font-size: .85rem; color: var(--ink-soft); margin: 0 0 10px; line-height: 1.5; }
 .probs.four { grid-template-columns: repeat(4, 1fr); }
+.why { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line-soft); font-size: .82rem; color: var(--ink-soft); }
+.why > span { font-size: .7rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+.why ul { margin: 6px 0 0; padding-left: 18px; }
+.why li { margin: 2px 0; line-height: 1.45; }
+.spec-table.bench td:not(:first-child), .spec-table.bench th:not(:first-child) { text-align: right; }
+.spec-table.bench td:last-child { font-weight: inherit; }
 .meta-row { display: flex; gap: 22px; flex-wrap: wrap; font-size: .82rem; color: var(--ink-faint); align-items: center; }
 .meta-row b { color: var(--ink); font-weight: 600; }
 .meta-row a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }

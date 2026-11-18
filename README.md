@@ -8,12 +8,17 @@
 
 ## Quick start
 
+This is a **Streamlit** app: Python generates the web page, so there is no HTML
+file to open. Windows users can simply **double-click `run.bat`**. Or by hand:
+
 ```bash
+python -m venv venv && venv\Scripts\activate   # (Mac/Linux: source venv/bin/activate)
 pip install -r requirements.txt
-python -m src.train_model     # sentiment model  (~1-3 min, downloads TweetEval)
-python -m src.hate_speech     # hate-speech model (~1 min)
+python -m src.train_model     # lightweight sentiment model  (~1-3 min)
+python -m src.hate_speech     # lightweight hate-speech model (~1 min)
 streamlit run app.py          # opens http://localhost:8501
 ```
+The first analysis downloads the two RoBERTa models (~1 GB, cached afterwards).
 
 **Input modes** (sidebar → Input):
 
@@ -27,6 +32,41 @@ streamlit run app.py          # opens http://localhost:8501
 > Note: X's API access tiers change frequently and reading posts may require a paid
 > plan. Post-link mode therefore falls back to the public embed endpoint
 > automatically (text and date only, no like/repost counts).
+
+## How the engine works (fuzzy ensemble)
+
+```
+post ─┬─► RoBERTa sentiment (cardiffnlp/twitter-roberta-base-sentiment-latest) ─┐
+      ├─► VADER lexicon (emoji, CAPS, "!!!", intensifiers) ─────────────────────┼─► fuzzy fusion ─► sentiment + confidence + "why"
+      ├─► TF-IDF + Logistic Regression ─────────────────────────────────────────┘
+      ├─► RoBERTa hate (cardiffnlp/twitter-roberta-base-hate-latest) ───────────┐
+      ├─► TF-IDF hate model ────────────────────────────────────────────────────┼─► fuzzy fusion ─► hate score + severity + "why"
+      └─► linguistic cues (group mentions, dehumanising words, threats, ...) ───┘
+```
+
+The **fuzzy-logic layer** (`src/fuzzy.py`) is a zero-order Takagi–Sugeno inference system:
+
+1. **Fuzzification**: crisp inputs become degrees of membership in linguistic sets,
+   e.g. transformer confidence is *low / medium / high*, post length is
+   *short / medium / long*, and VADER intensity is *weak / moderate / strong*.
+2. **Rule evaluation** (AND = min, OR = max, NOT = 1 − x), for example:
+   * IF transformer confidence is HIGH THEN trust the transformer most
+   * IF transformer is unsure AND lexical emotion is STRONG THEN raise VADER's weight
+   * IF a sarcasm marker is present AND the post sounds positive THEN shift toward negative
+   * IF an identity group is mentioned AND dehumanising / exclusion / threat language is present THEN hate is HIGH
+   * IF there's profanity but no targeted group THEN *offensive, not hate*
+3. **Defuzzification**: firing-strength-weighted average of the rule outputs.
+
+Every post card shows the strongest rules that fired ("Why"). Each post also gets a
+confidence level (High / Medium / Low) and a hate severity (None / Offensive / Hate / Severe).
+
+**Benchmark**: `python -m src.evaluate` scores the original TF-IDF model, each
+expert alone and the fuzzy ensemble on TweetEval's official test splits. The
+baselines are trained on the train split only, and the hate threshold is tuned on
+the validation split only. Results are saved to `models/benchmark.json` and shown in the app.
+
+If `torch`/`transformers` aren't installed, the app automatically falls back to
+TF-IDF + VADER with the same fuzzy layer.
 
 ## Hate-speech model
 
